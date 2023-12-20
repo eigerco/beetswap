@@ -9,7 +9,10 @@ use cid::CidGeneric;
 use fnv::FnvHashMap;
 use futures::future::{AbortHandle, Abortable, BoxFuture};
 use futures::stream::FuturesUnordered;
+use futures::task::AtomicWaker;
 use futures::{FutureExt, SinkExt, StreamExt};
+use libp2p::swarm::NotifyHandler;
+use libp2p::PeerId;
 use libp2p::{
     core::upgrade::ReadyUpgrade,
     swarm::{ConnectionHandlerEvent, SubstreamProtocol, ToSwarm},
@@ -18,7 +21,8 @@ use libp2p::{
 use smallvec::SmallVec;
 use std::sync::Mutex;
 
-use crate::message::{Codec, MessageMetadata};
+use crate::cid_prefix::CidPrefix;
+use crate::message::Codec;
 use crate::proto::message::mod_Message::{BlockPresenceType, Wantlist as ProtoWantlist};
 use crate::proto::message::Message;
 use crate::utils::convert_cid;
@@ -59,12 +63,28 @@ where
     config: Arc<ClientConfig>,
     store: Arc<B>,
     protocol: StreamProtocol,
-    wantlist: Arc<Mutex<Wantlist<S>>>,
-    cid_to_queries: FnvHashMap<CidGeneric<S>, SmallVec<[QueryId; 1]>>,
     queue: VecDeque<ToSwarm<BitswapEvent, ToHandlerEvent>>,
+    wantlist: Wantlist<S>,
+    peers: FnvHashMap<PeerId, PeerState<S>>,
+    cid_to_queries: FnvHashMap<CidGeneric<S>, SmallVec<[QueryId; 1]>>,
     tasks: FuturesUnordered<BoxFuture<'static, TaskResult<S>>>,
     query_abort_handle: FnvHashMap<QueryId, AbortHandle>,
     next_query_id: u64,
+    waker: Arc<AtomicWaker>,
+}
+
+#[derive(Debug)]
+struct PeerState<const S: usize> {
+    sending: Arc<Mutex<SendingState>>,
+    wantlist: WantlistState<S>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[doc(hidden)]
+pub enum SendingState {
+    Ready,
+    Sending,
+    Poisoned,
 }
 
 impl<const S: usize, B> ClientBehaviour<S, B>
@@ -76,22 +96,33 @@ where
             config: Arc::new(config),
             store,
             protocol,
-            wantlist: Arc::new(Mutex::new(Wantlist::new())),
-            cid_to_queries: FnvHashMap::default(),
             queue: VecDeque::new(),
+            wantlist: Wantlist::new(),
+            peers: FnvHashMap::default(),
+            cid_to_queries: FnvHashMap::default(),
             tasks: FuturesUnordered::new(),
             query_abort_handle: FnvHashMap::default(),
             next_query_id: 0,
+            waker: Arc::new(AtomicWaker::new()),
         }
     }
 
-    pub(crate) fn new_connection_handler(&self) -> ClientConnectionHandler<S> {
+    pub(crate) fn new_connection_handler(&mut self, peer: PeerId) -> ClientConnectionHandler<S> {
+        self.peers.insert(
+            peer,
+            PeerState {
+                sending: Arc::new(Mutex::new(SendingState::Ready)),
+                wantlist: WantlistState::new(),
+            },
+        );
+
         ClientConnectionHandler {
-            config: self.config.clone(),
             protocol: self.protocol.clone(),
             stream_requested: false,
             sink: None,
-            wantlist_state: WantlistState::new(self.wantlist.clone()),
+            wantlist: None,
+            sending_state: None,
+            behaviour_waker: Arc::new(AtomicWaker::new()),
         }
     }
 
@@ -101,26 +132,42 @@ where
         id
     }
 
+    /// Schedule a `Blockstore::get` for the specified cid
+    fn schedule_store_get(&mut self, query_id: QueryId, cid: CidGeneric<S>) {
+        let store = self.store.clone();
+        let (handle, reg) = AbortHandle::new_pair();
+
+        self.tasks.push(
+            async move {
+                match Abortable::new(store.get(&cid), reg).await {
+                    Ok(res) => TaskResult::Get(query_id, cid, res),
+                    Err(_) => TaskResult::Cancelled,
+                }
+            }
+            .boxed(),
+        );
+
+        self.query_abort_handle.insert(query_id, handle);
+    }
+
+    /// Schedule a `Blockstore::put_many_keyed` for the specified blocks
+    fn schedule_store_put_many(&mut self, blocks: Vec<(CidGeneric<S>, Vec<u8>)>) {
+        let store = self.store.clone();
+
+        self.tasks.push(
+            async move {
+                let res = store.put_many_keyed(blocks.into_iter()).await;
+                TaskResult::Set(res)
+            }
+            .boxed(),
+        );
+    }
+
     pub(crate) fn get<const CS: usize>(&mut self, cid: &CidGeneric<CS>) -> QueryId {
         let query_id = self.next_query_id();
 
         match convert_cid(cid) {
-            Some(cid) => {
-                let store = self.store.clone();
-                let (handle, reg) = AbortHandle::new_pair();
-
-                self.tasks.push(
-                    async move {
-                        match Abortable::new(store.get(&cid), reg).await {
-                            Ok(res) => TaskResult::Get(query_id, cid, res),
-                            Err(_) => TaskResult::Cancelled,
-                        }
-                    }
-                    .boxed(),
-                );
-
-                self.query_abort_handle.insert(query_id, handle);
-            }
+            Some(cid) => self.schedule_store_get(query_id, cid),
             None => {
                 self.queue
                     .push_back(ToSwarm::GenerateEvent(BitswapEvent::GetQueryError {
@@ -144,9 +191,10 @@ where
 
                 // If CID doesn't have any other queries requesting it, remove it completely
                 if queries.is_empty() {
+                    // Cancelling message will be generated from `pool` method
                     let cid = cid.to_owned();
                     self.cid_to_queries.remove(&cid);
-                    self.wantlist.lock().unwrap().remove(&cid);
+                    self.wantlist.remove(&cid);
                 }
 
                 break;
@@ -154,28 +202,46 @@ where
         }
     }
 
-    pub(crate) fn process_incoming_message(
-        &mut self,
-        msg: &Message,
-        metadata: &MessageMetadata<S>,
-    ) {
+    pub(crate) fn process_incoming_message(&mut self, peer: PeerId, msg: &Message) {
+        let Some(peer_state) = self.peers.get_mut(&peer) else {
+            return;
+        };
+
         let mut new_blocks = Vec::new();
 
-        // TODO: If some sends a huge message, the executor will block! We need to truncate the
-        // data, maybe even in the `message::Codec` level
-        for (block, cid) in msg.payload.iter().zip(metadata.blocks_cid.iter()) {
-            let Some(cid) = cid else {
+        // Update presence
+        for block_presense in &msg.blockPresences {
+            let Ok(cid) = CidGeneric::try_from(&*block_presense.cid) else {
                 continue;
             };
 
-            if !self.wantlist.lock().unwrap().remove(cid) {
-                debug_assert!(!self.cid_to_queries.contains_key(cid));
+            match block_presense.type_pb {
+                BlockPresenceType::Have => peer_state.wantlist.got_have(&cid),
+                BlockPresenceType::DontHave => peer_state.wantlist.got_dont_have(&cid),
+            }
+        }
+
+        // TODO: If some sends a huge message, the executor will block! We need to
+        // truncate the data, maybe even in the `message::Codec` level
+        for block in &msg.payload {
+            let Some(cid_prefix) = CidPrefix::from_bytes(&block.prefix) else {
+                continue;
+            };
+
+            let Some(cid) = cid_prefix.to_cid(&block.data) else {
+                continue;
+            };
+
+            if !self.wantlist.remove(&cid) {
+                debug_assert!(!self.cid_to_queries.contains_key(&cid));
                 continue;
             }
 
+            peer_state.wantlist.got_block(&cid);
             new_blocks.push((cid.to_owned(), block.data.clone()));
 
-            if let Some(queries) = self.cid_to_queries.remove(cid) {
+            // Inform the upper layer for the result
+            if let Some(queries) = self.cid_to_queries.remove(&cid) {
                 for query_id in queries {
                     self.queue
                         .push_back(ToSwarm::GenerateEvent(BitswapEvent::GetQueryResponse {
@@ -188,19 +254,69 @@ where
 
         // Store them in blockstore
         if !new_blocks.is_empty() {
-            let store = self.store.clone();
-
-            self.tasks.push(
-                async move {
-                    let res = store.put_many_keyed(new_blocks.into_iter()).await;
-                    TaskResult::Set(res)
-                }
-                .boxed(),
-            );
+            self.schedule_store_put_many(new_blocks);
         }
     }
 
+    fn update_handlers(&mut self) -> bool {
+        let mut handler_updated = false;
+
+        for (peer, state) in self.peers.iter_mut() {
+            let mut sending_state = state.sending.lock().unwrap();
+
+            let send_full = match &*sending_state {
+                SendingState::Sending => {
+                    if Arc::strong_count(&state.sending) == 1 {
+                        // `Sending` state with strong count of 1 can happen only
+                        // when the connection is dropped just before it reads our
+                        // event. In this case we treat is with the same way as `Poisoned`
+                        // state.
+                        true
+                    } else {
+                        // ClientConnectionHandler will wake us when we can retry
+                        continue;
+                    }
+                }
+                SendingState::Ready => false,
+                SendingState::Poisoned => true,
+            };
+
+            let wantlist = if send_full {
+                state
+                    .wantlist
+                    .generate_proto_full(&self.wantlist, self.config.set_send_dont_have)
+            } else {
+                state
+                    .wantlist
+                    .generate_proto_update(&self.wantlist, self.config.set_send_dont_have)
+            };
+
+            if wantlist.entries.is_empty() {
+                // Nothing to send
+                //
+                // TODO: What if the send_full is true? Shouldn't we send it to clear
+                // the wantlist? However we should do it once.
+                continue;
+            }
+
+            self.queue.push_back(ToSwarm::NotifyHandler {
+                peer_id: peer.to_owned(),
+                handler: NotifyHandler::Any,
+                event: ToHandlerEvent::SendWantlist(wantlist, state.sending.clone()),
+            });
+
+            *sending_state = SendingState::Sending;
+            handler_updated = true;
+        }
+
+        // This is true if at least one handler is updated
+        handler_updated
+    }
+
     pub(crate) fn poll(&mut self, cx: &mut Context) -> Poll<ToSwarm<BitswapEvent, ToHandlerEvent>> {
+        // Update waker
+        self.waker.register(cx.waker());
+
         loop {
             if let Some(ev) = self.queue.pop_front() {
                 return Poll::Ready(ev);
@@ -221,7 +337,7 @@ where
                     // Blockstore doesn't have the data, add CID in the wantlist. Connection handler will
                     // read the list and do the request.
                     TaskResult::Get(query_id, cid, Ok(None)) => {
-                        self.wantlist.lock().unwrap().insert(cid);
+                        self.wantlist.insert(cid);
                         self.cid_to_queries.entry(cid).or_default().push(query_id);
                     }
 
@@ -246,17 +362,28 @@ where
                 continue;
             }
 
+            if self.update_handlers() {
+                // New events generated, loop again to send them.
+                continue;
+            }
+
             return Poll::Pending;
         }
     }
 }
 
 pub(crate) struct ClientConnectionHandler<const S: usize> {
-    config: Arc<ClientConfig>,
     protocol: StreamProtocol,
     stream_requested: bool,
     sink: Option<FramedWrite<libp2p::Stream, Codec>>,
-    wantlist_state: WantlistState<S>,
+    /// Wantlist to be send
+    wantlist: Option<ProtoWantlist>,
+    /// Sending state of peer.
+    ///
+    /// Even if we have multiple concurrent connections with the peer, only
+    /// one of them will be sending and have this value filled.
+    sending_state: Option<Arc<Mutex<SendingState>>>,
+    behaviour_waker: Arc<AtomicWaker>,
 }
 
 impl<const S: usize> ClientConnectionHandler<S> {
@@ -270,25 +397,16 @@ impl<const S: usize> ClientConnectionHandler<S> {
         self.stream_requested = false;
     }
 
-    pub(crate) fn process_incoming_message(
+    pub(crate) fn send_wantlist(
         &mut self,
-        msg: &Message,
-        metadata: &MessageMetadata<S>,
+        wantlist: ProtoWantlist,
+        state: Arc<Mutex<SendingState>>,
     ) {
-        for block_presense in &msg.blockPresences {
-            let Ok(cid) = CidGeneric::try_from(&*block_presense.cid) else {
-                continue;
-            };
+        debug_assert!(self.wantlist.is_none());
+        debug_assert!(self.sending_state.is_none());
 
-            match block_presense.type_pb {
-                BlockPresenceType::Have => self.wantlist_state.got_have(&cid),
-                BlockPresenceType::DontHave => self.wantlist_state.got_dont_have(&cid),
-            }
-        }
-
-        for block_cid in metadata.blocks_cid.iter().flatten() {
-            self.wantlist_state.got_block(block_cid);
-        }
+        self.wantlist = Some(wantlist);
+        self.sending_state = Some(state);
     }
 
     fn poll_outgoing_no_stream(
@@ -296,12 +414,15 @@ impl<const S: usize> ClientConnectionHandler<S> {
     ) -> Poll<ConnectionHandlerEvent<ReadyUpgrade<StreamProtocol>, (), ToBehaviourEvent<S>>> {
         // `stream_requested` already checked in `poll_outgoing`
         debug_assert!(!self.stream_requested);
+        // `wantlist` and `sending_state` must be both `Some` or both `None`
+        debug_assert_eq!(self.wantlist.is_some(), self.sending_state.is_some());
 
-        if self.wantlist_state.is_updated() {
+        if self.wantlist.is_none() {
+            // Nothing to send
             return Poll::Pending;
         }
 
-        // Other end needs to be updated, so request a new stream
+        // There are data to send, so request a new stream.
         self.stream_requested = true;
 
         Poll::Ready(ConnectionHandlerEvent::OutboundSubstreamRequest {
@@ -310,6 +431,17 @@ impl<const S: usize> ClientConnectionHandler<S> {
                 (), // TODO: maybe we can say here that we are the client?
             ),
         })
+    }
+
+    fn on_sink_error(&mut self) {
+        self.sink.take();
+
+        if self.wantlist.is_none() {
+            if let Some(state) = self.sending_state.take() {
+                *state.lock().unwrap() = SendingState::Poisoned;
+                self.behaviour_waker.wake();
+            }
+        }
     }
 
     fn poll_outgoing(
@@ -328,34 +460,32 @@ impl<const S: usize> ClientConnectionHandler<S> {
 
             // Send the ongoing message before we continue to a new one
             if ready!(sink.poll_flush_unpin(cx)).is_err() {
-                // Sink closed unexpectedly, remove it and retry
-                self.sink.take();
+                // Sink closed unexpectedly, retry
+                self.on_sink_error();
                 continue;
             }
 
-            let entries = self
-                .wantlist_state
-                .generate_update_entries(self.config.set_send_dont_have);
-
-            if entries.is_empty() {
+            let Some(wantlist) = self.wantlist.take() else {
+                // Nothing to send
+                if let Some(state) = self.sending_state.take() {
+                    *state.lock().unwrap() = SendingState::Ready;
+                    self.behaviour_waker.wake();
+                }
                 return Poll::Pending;
-            }
+            };
 
             let message = Message {
-                wantlist: Some(ProtoWantlist {
-                    entries,
-                    full: false,
-                }),
+                wantlist: Some(wantlist),
                 ..Message::default()
             };
 
             if sink.start_send_unpin(&message).is_err() {
                 // Something went wrong, retry
-                self.sink.take();
-                continue;
+                self.on_sink_error();
             }
 
-            return Poll::Pending;
+            // We need to loop once more, so `poll_flush` will be called
+            // and register a waker.
         }
     }
 
@@ -370,5 +500,19 @@ impl<const S: usize> ClientConnectionHandler<S> {
 impl<const S: usize> fmt::Debug for ClientConnectionHandler<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("ClientConnectionHandler")
+    }
+}
+
+impl<const S: usize> Drop for ClientConnectionHandler<S> {
+    fn drop(&mut self) {
+        if let Some(state) = self.sending_state.take() {
+            let mut state = state.lock().unwrap();
+
+            // If sending was never done
+            if *state == SendingState::Sending {
+                *state = SendingState::Poisoned;
+                self.behaviour_waker.wake();
+            }
+        }
     }
 }

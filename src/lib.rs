@@ -1,11 +1,12 @@
 use std::fmt;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use asynchronous_codec::FramedRead;
 use blockstore::{Blockstore, BlockstoreError};
 use cid::CidGeneric;
+use client::SendingState;
 use futures::{stream::SelectAll, StreamExt};
 use libp2p::{
     core::{upgrade::ReadyUpgrade, Endpoint},
@@ -25,7 +26,8 @@ mod utils;
 mod wantlist;
 
 use crate::client::{ClientBehaviour, ClientConnectionHandler};
-use crate::message::{Codec, MessageMetadata};
+use crate::message::Codec;
+use crate::proto::message::mod_Message::Wantlist as ProtoWantlist;
 use crate::proto::message::Message;
 use crate::utils::stream_protocol;
 
@@ -111,13 +113,14 @@ where
     fn handle_established_inbound_connection(
         &mut self,
         _connection_id: ConnectionId,
-        _peer: PeerId,
+        peer: PeerId,
         _local_addr: &Multiaddr,
         _remote_addr: &Multiaddr,
     ) -> Result<Self::ConnectionHandler, ConnectionDenied> {
         Ok(Handler {
+            peer,
             protocol: self.protocol.clone(),
-            client_handler: self.client.new_connection_handler(),
+            client_handler: self.client.new_connection_handler(peer),
             incoming_streams: SelectAll::new(),
         })
     }
@@ -125,13 +128,14 @@ where
     fn handle_established_outbound_connection(
         &mut self,
         _connection_id: ConnectionId,
-        _peer: PeerId,
+        peer: PeerId,
         _addr: &Multiaddr,
         _role_override: Endpoint,
     ) -> Result<Self::ConnectionHandler, ConnectionDenied> {
         Ok(Handler {
+            peer,
             protocol: self.protocol.clone(),
-            client_handler: self.client.new_connection_handler(),
+            client_handler: self.client.new_connection_handler(peer),
             incoming_streams: SelectAll::new(),
         })
     }
@@ -145,8 +149,8 @@ where
         event: THandlerOutEvent<Self>,
     ) {
         match event {
-            ToBehaviourEvent::IncomingMessage(msg, metadata) => {
-                self.client.process_incoming_message(&msg, &metadata);
+            ToBehaviourEvent::IncomingMessage(peer, msg) => {
+                self.client.process_incoming_message(peer, &msg);
             }
         }
     }
@@ -161,14 +165,18 @@ where
 
 #[derive(Debug)]
 pub enum ToBehaviourEvent<const S: usize> {
-    IncomingMessage(Message, MessageMetadata<S>),
+    IncomingMessage(PeerId, Message),
 }
 
 #[derive(Debug)]
-pub enum ToHandlerEvent {}
+#[doc(hidden)]
+pub enum ToHandlerEvent {
+    SendWantlist(ProtoWantlist, Arc<Mutex<SendingState>>),
+}
 
 #[derive(Debug)]
 pub struct Handler<const MAX_MULTIHASH_SIZE: usize> {
+    peer: PeerId,
     protocol: StreamProtocol,
     client_handler: ClientConnectionHandler<MAX_MULTIHASH_SIZE>,
     incoming_streams: SelectAll<StreamFramedRead>,
@@ -186,7 +194,13 @@ impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler for Handler<MAX_MULTIHAS
         SubstreamProtocol::new(ReadyUpgrade::new(self.protocol.clone()), ())
     }
 
-    fn on_behaviour_event(&mut self, _event: Self::FromBehaviour) {}
+    fn on_behaviour_event(&mut self, event: Self::FromBehaviour) {
+        match event {
+            ToHandlerEvent::SendWantlist(wantlist, state) => {
+                self.client_handler.send_wantlist(wantlist, state);
+            }
+        }
+    }
 
     fn on_connection_event(
         &mut self,
@@ -228,14 +242,8 @@ impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler for Handler<MAX_MULTIHAS
         ConnectionHandlerEvent<Self::OutboundProtocol, Self::OutboundOpenInfo, Self::ToBehaviour>,
     > {
         if let Poll::Ready(Some(msg)) = self.incoming_streams.poll_next_unpin(cx) {
-            let metadata = MessageMetadata::new(&msg);
-
-            // Inform client handler before it is forwarded to client behaviour
-            self.client_handler
-                .process_incoming_message(&msg, &metadata);
-
             return Poll::Ready(ConnectionHandlerEvent::NotifyBehaviour(
-                ToBehaviourEvent::IncomingMessage(msg, metadata),
+                ToBehaviourEvent::IncomingMessage(self.peer, msg),
             ));
         }
 

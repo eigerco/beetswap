@@ -3,7 +3,6 @@ use bytes::{Buf, BytesMut};
 use cid::CidGeneric;
 use quick_protobuf::{BytesReader, BytesWriter, MessageWrite, Writer, WriterBackend};
 
-use crate::cid_prefix::CidPrefix;
 use crate::proto::message::mod_Message::mod_Wantlist::{Entry, WantType};
 use crate::proto::message::Message;
 
@@ -53,27 +52,6 @@ impl Decoder for Codec {
         src.advance(varint_len + len);
 
         Ok(Some(msg))
-    }
-}
-
-#[derive(Debug)]
-pub struct MessageMetadata<const S: usize> {
-    pub(crate) blocks_cid: Vec<Option<CidGeneric<S>>>,
-}
-
-impl<const S: usize> MessageMetadata<S> {
-    pub(crate) fn new(msg: &Message) -> Self {
-        let mut blocks_cid = vec![None; msg.payload.len()];
-
-        for (i, block) in msg.payload.iter().enumerate() {
-            if let Some(prefix) = CidPrefix::from_bytes(&block.prefix) {
-                if let Some(cid) = prefix.to_cid::<S>(&block.data) {
-                    blocks_cid[i] = Some(cid);
-                }
-            }
-        }
-
-        MessageMetadata { blocks_cid }
     }
 }
 
