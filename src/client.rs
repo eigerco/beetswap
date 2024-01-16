@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::sync::Arc;
 use std::task::{ready, Context, Poll};
+use std::time::{Duration, Instant};
 
 use asynchronous_codec::FramedWrite;
 use blockstore::{Blockstore, BlockstoreError};
@@ -28,6 +29,8 @@ use crate::proto::message::Message;
 use crate::utils::convert_cid;
 use crate::wantlist::{Wantlist, WantlistState};
 use crate::{BitswapError, BitswapEvent, Result, ToBehaviourEvent, ToHandlerEvent};
+
+const SEND_FULL_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QueryId(u64);
@@ -77,6 +80,7 @@ where
 struct PeerState<const S: usize> {
     sending: Arc<Mutex<SendingState>>,
     wantlist: WantlistState<S>,
+    last_send_full_tm: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +117,7 @@ where
             PeerState {
                 sending: Arc::new(Mutex::new(SendingState::Ready)),
                 wantlist: WantlistState::new(),
+                last_send_full_tm: None,
             },
         );
 
@@ -264,6 +269,7 @@ where
         for (peer, state) in self.peers.iter_mut() {
             let mut sending_state = state.sending.lock().unwrap();
 
+            // Decide if full list is needed or not.
             let send_full = match &*sending_state {
                 SendingState::Sending => {
                     if Arc::strong_count(&state.sending) == 1 {
@@ -277,7 +283,13 @@ where
                         continue;
                     }
                 }
-                SendingState::Ready => false,
+                SendingState::Ready => match state.last_send_full_tm {
+                    // Send full list if interval time is elapsed.
+                    Some(tm) => tm.elapsed() >= SEND_FULL_INTERVAL,
+                    // Send full list the first time.
+                    None => true,
+                },
+                // State is poisoned, send full list to recover.
                 SendingState::Poisoned => true,
             };
 
@@ -297,6 +309,10 @@ where
                 // TODO: What if the send_full is true? Shouldn't we send it to clear
                 // the wantlist? However we should do it once.
                 continue;
+            }
+
+            if wantlist.full {
+                state.last_send_full_tm = Some(Instant::now());
             }
 
             self.queue.push_back(ToSwarm::NotifyHandler {
