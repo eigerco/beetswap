@@ -11,13 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
-    - name: Install Protoc
-      uses: arduino/setup-protoc@v2
-      with:
-        version: "23.3"
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Run clippy for native
+    - name: Run clippy
       run: cargo clippy --all --all-targets -- -D warnings
 
 
@@ -48,12 +42,6 @@ jobs:
           cargo-${{ hashFiles('**/Cargo.lock') }}
           cargo-
 
-    - name: Install Protoc
-      uses: arduino/setup-protoc@v2
-      with:
-        version: "23.3"
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
-
     - name: Run tests
       run: cargo test
 
@@ -64,12 +52,6 @@ jobs:
     steps:
     - name: Checkout sources
       uses: actions/checkout@v3
-
-    - name: Install Protoc
-      uses: arduino/setup-protoc@v2
-      with:
-        version: "23.3"
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Install toolchain
       uses: dtolnay/rust-toolchain@nightly
