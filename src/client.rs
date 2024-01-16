@@ -768,7 +768,7 @@ mod tests {
         let mut client = new_client().await;
 
         let peer = PeerId::random();
-        let mut _conn = client.new_connection_handler(PeerId::random());
+        let mut _conn = client.new_connection_handler(peer);
 
         let cid1 = cid_of_data(b"x1");
         let _query_id1 = client.get(&cid1);
