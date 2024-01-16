@@ -353,7 +353,7 @@ where
                         ));
                     }
 
-                    // Blockstore doesn't have the data add CID in the wantlist.
+                    // If blockstore doesn't have the data, add CID in the wantlist.
                     //
                     // Connection handlers will be informed via `update_handlers` about the new items in wantlist.
                     TaskResult::Get(query_id, cid, Ok(None)) => {
