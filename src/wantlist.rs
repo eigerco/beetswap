@@ -10,13 +10,15 @@ use crate::proto::message::mod_Message::Wantlist as ProtoWantlist;
 pub(crate) struct Wantlist<const S: usize> {
     cids: FnvHashSet<CidGeneric<S>>,
     revision: u64,
+    set_send_dont_have: bool,
 }
 
 impl<const S: usize> Wantlist<S> {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(set_send_dont_have: bool) -> Self {
         Wantlist {
             cids: FnvHashSet::default(),
             revision: 0,
+            set_send_dont_have,
         }
     }
 
@@ -59,7 +61,7 @@ impl<const S: usize> WantlistState<S> {
     pub(crate) fn new() -> Self {
         WantlistState {
             req_state: FnvHashMap::default(),
-            force_update: true,
+            force_update: false,
             synced_revision: 0,
         }
     }
@@ -87,11 +89,7 @@ impl<const S: usize> WantlistState<S> {
             .and_modify(|state| *state = WantReqState::GotBlock);
     }
 
-    pub(crate) fn generate_proto_full(
-        &mut self,
-        wantlist: &Wantlist<S>,
-        set_send_dont_have: bool,
-    ) -> ProtoWantlist {
+    pub(crate) fn generate_proto_full(&mut self, wantlist: &Wantlist<S>) -> ProtoWantlist {
         // Remove canceled requests or received blocks
         self.req_state.retain(|cid, _| wantlist.cids.contains(cid));
 
@@ -107,17 +105,17 @@ impl<const S: usize> WantlistState<S> {
         for (cid, req_state) in self.req_state.iter_mut() {
             match *req_state {
                 WantReqState::SentWantHave => {
-                    entries.push(new_want_have_entry(cid, set_send_dont_have));
+                    entries.push(new_want_have_entry(cid, wantlist.set_send_dont_have));
                 }
                 WantReqState::GotHave => {
-                    entries.push(new_want_block_entry(cid, set_send_dont_have));
+                    entries.push(new_want_block_entry(cid, wantlist.set_send_dont_have));
                     *req_state = WantReqState::SentWantBlock;
                 }
                 WantReqState::GotDontHave => {
                     // Nothing to request
                 }
                 WantReqState::SentWantBlock => {
-                    entries.push(new_want_block_entry(cid, set_send_dont_have));
+                    entries.push(new_want_block_entry(cid, wantlist.set_send_dont_have));
                 }
                 WantReqState::GotBlock => {
                     // Nothing to request
@@ -131,11 +129,7 @@ impl<const S: usize> WantlistState<S> {
         }
     }
 
-    pub(crate) fn generate_proto_update(
-        &mut self,
-        wantlist: &Wantlist<S>,
-        set_send_dont_have: bool,
-    ) -> ProtoWantlist {
+    pub(crate) fn generate_proto_update(&mut self, wantlist: &Wantlist<S>) -> ProtoWantlist {
         if self.is_updated(wantlist) {
             return ProtoWantlist::default();
         }
@@ -161,7 +155,7 @@ impl<const S: usize> WantlistState<S> {
                 (true, WantReqState::SentWantHave) => {}
 
                 (true, WantReqState::GotHave) => {
-                    entries.push(new_want_block_entry(cid, set_send_dont_have));
+                    entries.push(new_want_block_entry(cid, wantlist.set_send_dont_have));
                     *req_state = WantReqState::SentWantBlock;
                 }
 
@@ -184,7 +178,7 @@ impl<const S: usize> WantlistState<S> {
         // Add new entries
         for cid in &wantlist.cids {
             if let hash_map::Entry::Vacant(state_entry) = self.req_state.entry(cid.to_owned()) {
-                entries.push(new_want_have_entry(cid, set_send_dont_have));
+                entries.push(new_want_have_entry(cid, wantlist.set_send_dont_have));
                 state_entry.insert(WantReqState::SentWantHave);
             }
         }
@@ -196,5 +190,354 @@ impl<const S: usize> WantlistState<S> {
             entries,
             full: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        proto::message::mod_Message::mod_Wantlist::{Entry, WantType},
+        test_utils::cid_of_data,
+    };
+
+    #[test]
+    fn insert() {
+        let mut wantlist = Wantlist::<64>::new(true);
+        let mut state = WantlistState::<64>::new();
+
+        assert!(state.is_updated(&wantlist));
+        assert_eq!(
+            state.generate_proto_update(&wantlist),
+            ProtoWantlist::default()
+        );
+
+        let cid = cid_of_data(b"1");
+        wantlist.insert(cid);
+        assert!(!state.is_updated(&wantlist));
+
+        assert_eq!(
+            state.generate_proto_update(&wantlist),
+            ProtoWantlist {
+                entries: vec![Entry {
+                    block: cid.to_bytes(),
+                    priority: 1,
+                    cancel: false,
+                    wantType: WantType::Have,
+                    sendDontHave: true,
+                }],
+                full: false,
+            }
+        );
+        assert!(state.is_updated(&wantlist));
+    }
+
+    #[test]
+    fn handle_have() {
+        let mut wantlist = Wantlist::<64>::new(true);
+        let mut state = WantlistState::<64>::new();
+
+        let cid1 = cid_of_data(b"1");
+        let cid2 = cid_of_data(b"2");
+
+        wantlist.insert(cid1);
+        wantlist.insert(cid2);
+
+        assert_eq!(
+            state.generate_proto_update(&wantlist),
+            ProtoWantlist {
+                entries: vec![
+                    Entry {
+                        block: cid1.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    },
+                    Entry {
+                        block: cid2.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    }
+                ],
+                full: false,
+            }
+        );
+        assert!(state.is_updated(&wantlist));
+
+        state.got_have(&cid1);
+        assert!(!state.is_updated(&wantlist));
+
+        assert_eq!(
+            state.generate_proto_update(&wantlist),
+            ProtoWantlist {
+                entries: vec![Entry {
+                    block: cid1.to_bytes(),
+                    priority: 1,
+                    cancel: false,
+                    wantType: WantType::Block,
+                    sendDontHave: true,
+                }],
+                full: false,
+            }
+        );
+        assert!(state.is_updated(&wantlist));
+
+        assert_eq!(
+            state.generate_proto_full(&wantlist),
+            ProtoWantlist {
+                entries: vec![
+                    Entry {
+                        block: cid1.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Block,
+                        sendDontHave: true,
+                    },
+                    Entry {
+                        block: cid2.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    }
+                ],
+                full: true,
+            }
+        );
+    }
+
+    #[test]
+    fn handle_have_then_generate_only_full() {
+        let mut wantlist = Wantlist::<64>::new(true);
+        let mut state = WantlistState::<64>::new();
+
+        let cid1 = cid_of_data(b"1");
+        let cid2 = cid_of_data(b"2");
+
+        wantlist.insert(cid1);
+        wantlist.insert(cid2);
+
+        assert_eq!(
+            state.generate_proto_update(&wantlist),
+            ProtoWantlist {
+                entries: vec![
+                    Entry {
+                        block: cid1.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    },
+                    Entry {
+                        block: cid2.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    }
+                ],
+                full: false,
+            }
+        );
+        assert!(state.is_updated(&wantlist));
+
+        state.got_have(&cid1);
+
+        assert_eq!(
+            state.generate_proto_full(&wantlist),
+            ProtoWantlist {
+                entries: vec![
+                    Entry {
+                        block: cid1.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Block,
+                        sendDontHave: true,
+                    },
+                    Entry {
+                        block: cid2.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    }
+                ],
+                full: true,
+            }
+        );
+    }
+
+    #[test]
+    fn handle_dont_have() {
+        let mut wantlist = Wantlist::<64>::new(true);
+        let mut state = WantlistState::<64>::new();
+
+        let cid1 = cid_of_data(b"1");
+        let cid2 = cid_of_data(b"2");
+
+        wantlist.insert(cid1);
+        wantlist.insert(cid2);
+
+        assert_eq!(
+            state.generate_proto_update(&wantlist),
+            ProtoWantlist {
+                entries: vec![
+                    Entry {
+                        block: cid1.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    },
+                    Entry {
+                        block: cid2.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    }
+                ],
+                full: false,
+            }
+        );
+        assert!(state.is_updated(&wantlist));
+
+        state.got_dont_have(&cid1);
+        assert!(state.is_updated(&wantlist));
+
+        assert_eq!(
+            state.generate_proto_full(&wantlist),
+            ProtoWantlist {
+                entries: vec![Entry {
+                    block: cid2.to_bytes(),
+                    priority: 1,
+                    cancel: false,
+                    wantType: WantType::Have,
+                    sendDontHave: true,
+                }],
+                full: true,
+            }
+        );
+    }
+
+    #[test]
+    fn handle_block() {
+        let mut wantlist = Wantlist::<64>::new(true);
+        let mut state = WantlistState::<64>::new();
+
+        let cid1 = cid_of_data(b"1");
+        let cid2 = cid_of_data(b"2");
+
+        wantlist.insert(cid1);
+        wantlist.insert(cid2);
+
+        assert_eq!(
+            state.generate_proto_update(&wantlist),
+            ProtoWantlist {
+                entries: vec![
+                    Entry {
+                        block: cid1.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    },
+                    Entry {
+                        block: cid2.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    }
+                ],
+                full: false,
+            }
+        );
+        assert!(state.is_updated(&wantlist));
+
+        state.got_block(&cid1);
+        assert!(state.is_updated(&wantlist));
+
+        assert_eq!(
+            state.generate_proto_full(&wantlist),
+            ProtoWantlist {
+                entries: vec![Entry {
+                    block: cid2.to_bytes(),
+                    priority: 1,
+                    cancel: false,
+                    wantType: WantType::Have,
+                    sendDontHave: true,
+                }],
+                full: true,
+            }
+        );
+    }
+
+    #[test]
+    fn cancel_cid() {
+        let mut wantlist = Wantlist::<64>::new(true);
+        let mut state = WantlistState::<64>::new();
+
+        let cid1 = cid_of_data(b"1");
+        let cid2 = cid_of_data(b"2");
+
+        wantlist.insert(cid1);
+        wantlist.insert(cid2);
+
+        assert_eq!(
+            state.generate_proto_update(&wantlist),
+            ProtoWantlist {
+                entries: vec![
+                    Entry {
+                        block: cid1.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    },
+                    Entry {
+                        block: cid2.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    }
+                ],
+                full: false,
+            }
+        );
+        assert!(state.is_updated(&wantlist));
+
+        wantlist.remove(&cid1);
+        assert!(!state.is_updated(&wantlist));
+
+        assert_eq!(
+            state.generate_proto_update(&wantlist),
+            ProtoWantlist {
+                entries: vec![Entry {
+                    block: cid1.to_bytes(),
+                    cancel: true,
+                    ..Default::default()
+                }],
+                full: false,
+            }
+        );
+
+        assert_eq!(
+            state.generate_proto_full(&wantlist),
+            ProtoWantlist {
+                entries: vec![Entry {
+                    block: cid2.to_bytes(),
+                    priority: 1,
+                    cancel: false,
+                    wantType: WantType::Have,
+                    sendDontHave: true,
+                }],
+                full: true,
+            }
+        );
     }
 }
