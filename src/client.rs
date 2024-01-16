@@ -63,7 +63,6 @@ pub(crate) struct ClientBehaviour<const S: usize, B>
 where
     B: Blockstore + Send + Sync,
 {
-    config: Arc<ClientConfig>,
     store: Arc<B>,
     protocol: StreamProtocol,
     queue: VecDeque<ToSwarm<BitswapEvent, ToHandlerEvent>>,
@@ -104,7 +103,6 @@ where
         let set_send_dont_have = config.set_send_dont_have;
 
         Ok(ClientBehaviour {
-            config: Arc::new(config),
             store,
             protocol,
             queue: VecDeque::new(),
@@ -542,15 +540,9 @@ impl<const S: usize> Drop for ClientConnectionHandler<S> {
 mod tests {
     use super::*;
     use crate::proto::message::mod_Message::{mod_Wantlist::WantType, Block, BlockPresence};
-    use crate::test_utils::{cid_of_data, poll_fn_once, select_poll_fn, RAW_CODEC};
+    use crate::test_utils::{cid_of_data, poll_fn_once};
     use blockstore::{Blockstore, InMemoryBlockstore};
-    use cid::Cid;
-    use futures::future::{select, Either};
-    use multihash::Multihash;
-    use multihash_codetable::{Code, MultihashDigest};
     use std::future::poll_fn;
-    use std::time::Duration;
-    use tokio::time::timeout;
 
     async fn blockstore() -> Arc<InMemoryBlockstore<64>> {
         let store = Arc::new(InMemoryBlockstore::<64>::new());
@@ -602,13 +594,13 @@ mod tests {
         let mut client = new_client().await;
 
         let peer1 = PeerId::random();
-        let mut conn1 = client.new_connection_handler(peer1.clone());
+        let mut _conn1 = client.new_connection_handler(peer1);
 
         let peer2 = PeerId::random();
-        let mut conn2 = client.new_connection_handler(peer2.clone());
+        let mut _conn2 = client.new_connection_handler(peer2);
 
         let cid1 = cid_of_data(b"x1");
-        let query_id1 = client.get(&cid1);
+        let _query_id1 = client.get(&cid1);
 
         // Wantlist will be generated for both peers
         for _ in 0..2 {
@@ -671,6 +663,9 @@ mod tests {
         assert!(!entry.cancel);
         assert_eq!(entry.wantType, WantType::Block);
         assert!(entry.sendDontHave);
+
+        // Mark send state as ready
+        *send_state.lock().unwrap() = SendingState::Ready;
     }
 
     #[tokio::test]
@@ -678,13 +673,13 @@ mod tests {
         let mut client = new_client().await;
 
         let peer1 = PeerId::random();
-        let mut conn1 = client.new_connection_handler(peer1.clone());
+        let mut _conn1 = client.new_connection_handler(peer1);
 
         let peer2 = PeerId::random();
-        let mut conn2 = client.new_connection_handler(peer2.clone());
+        let mut _conn2 = client.new_connection_handler(peer2);
 
         let cid1 = cid_of_data(b"x1");
-        let query_id1 = client.get(&cid1);
+        let _query_id1 = client.get(&cid1);
 
         // Wantlist will be generated for both peers
         for _ in 0..2 {
@@ -765,7 +760,7 @@ mod tests {
         let mut client = new_client().await;
 
         let peer1 = PeerId::random();
-        let mut conn1 = client.new_connection_handler(peer1.clone());
+        let mut _conn1 = client.new_connection_handler(peer1);
 
         let cid1 = cid_of_data(b"x1");
         let query_id1 = client.get(&cid1);
@@ -828,19 +823,18 @@ mod tests {
     #[tokio::test]
     async fn full_wantlist_then_update() {
         let mut client = new_client().await;
-        let mut conn = client.new_connection_handler(PeerId::random());
+        let mut _conn = client.new_connection_handler(PeerId::random());
 
         let cid1 = cid_of_data(b"x1");
-        let query_id1 = client.get(&cid1);
+        let _query_id1 = client.get(&cid1);
 
         let cid2 = cid_of_data(b"x2");
-        let query_id2 = client.get(&cid2);
+        let _query_id2 = client.get(&cid2);
 
         let ev = poll_fn(|cx| client.poll(cx)).await;
 
         let (wantlist, send_state) = match ev {
             ToSwarm::NotifyHandler {
-                peer_id,
                 event: ToHandlerEvent::SendWantlist(wantlist, send_state),
                 ..
             } => (wantlist, send_state),
@@ -872,13 +866,12 @@ mod tests {
         *send_state.lock().unwrap() = SendingState::Ready;
 
         let cid3 = cid_of_data(b"x3");
-        let query_id3 = client.get(&cid3);
+        let _query_id3 = client.get(&cid3);
 
         let ev = poll_fn(|cx| client.poll(cx)).await;
 
         let wantlist = match ev {
             ToSwarm::NotifyHandler {
-                peer_id,
                 event: ToHandlerEvent::SendWantlist(wantlist, _),
                 ..
             } => wantlist,
@@ -900,7 +893,7 @@ mod tests {
         let mut client = new_client().await;
 
         let peer1 = PeerId::random();
-        let mut conn1 = client.new_connection_handler(peer1.clone());
+        let mut _conn1 = client.new_connection_handler(peer1);
 
         let cid1 = cid_of_data(b"x1");
         let query_id1 = client.get(&cid1);
@@ -958,5 +951,8 @@ mod tests {
         let entry = &wantlist.entries[0];
         assert_eq!(entry.block, cid1.to_bytes());
         assert!(entry.cancel);
+
+        // Mark send state as ready
+        *send_state.lock().unwrap() = SendingState::Ready;
     }
 }

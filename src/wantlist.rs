@@ -200,7 +200,6 @@ mod tests {
         proto::message::mod_Message::mod_Wantlist::{Entry, WantType},
         test_utils::cid_of_data,
     };
-    use cid::Cid;
 
     #[test]
     fn insert() {
@@ -214,7 +213,7 @@ mod tests {
         );
 
         let cid = cid_of_data(b"1");
-        wantlist.insert(cid.clone());
+        wantlist.insert(cid);
         assert!(!state.is_updated(&wantlist));
 
         assert_eq!(
@@ -228,7 +227,6 @@ mod tests {
                     sendDontHave: true,
                 }],
                 full: false,
-                ..ProtoWantlist::default()
             }
         );
         assert!(state.is_updated(&wantlist));
@@ -242,8 +240,8 @@ mod tests {
         let cid1 = cid_of_data(b"1");
         let cid2 = cid_of_data(b"2");
 
-        wantlist.insert(cid1.clone());
-        wantlist.insert(cid2.clone());
+        wantlist.insert(cid1);
+        wantlist.insert(cid2);
 
         assert_eq!(
             state.generate_proto_update(&wantlist),
@@ -265,7 +263,6 @@ mod tests {
                     }
                 ],
                 full: false,
-                ..ProtoWantlist::default()
             }
         );
         assert!(state.is_updated(&wantlist));
@@ -284,7 +281,6 @@ mod tests {
                     sendDontHave: true,
                 }],
                 full: false,
-                ..ProtoWantlist::default()
             }
         );
         assert!(state.is_updated(&wantlist));
@@ -309,7 +305,6 @@ mod tests {
                     }
                 ],
                 full: true,
-                ..ProtoWantlist::default()
             }
         );
     }
@@ -322,8 +317,8 @@ mod tests {
         let cid1 = cid_of_data(b"1");
         let cid2 = cid_of_data(b"2");
 
-        wantlist.insert(cid1.clone());
-        wantlist.insert(cid2.clone());
+        wantlist.insert(cid1);
+        wantlist.insert(cid2);
 
         assert_eq!(
             state.generate_proto_update(&wantlist),
@@ -345,7 +340,6 @@ mod tests {
                     }
                 ],
                 full: false,
-                ..ProtoWantlist::default()
             }
         );
         assert!(state.is_updated(&wantlist));
@@ -372,7 +366,6 @@ mod tests {
                     }
                 ],
                 full: true,
-                ..ProtoWantlist::default()
             }
         );
     }
@@ -385,8 +378,8 @@ mod tests {
         let cid1 = cid_of_data(b"1");
         let cid2 = cid_of_data(b"2");
 
-        wantlist.insert(cid1.clone());
-        wantlist.insert(cid2.clone());
+        wantlist.insert(cid1);
+        wantlist.insert(cid2);
 
         assert_eq!(
             state.generate_proto_update(&wantlist),
@@ -408,7 +401,6 @@ mod tests {
                     }
                 ],
                 full: false,
-                ..ProtoWantlist::default()
             }
         );
         assert!(state.is_updated(&wantlist));
@@ -427,7 +419,6 @@ mod tests {
                     sendDontHave: true,
                 }],
                 full: true,
-                ..ProtoWantlist::default()
             }
         );
     }
@@ -440,8 +431,8 @@ mod tests {
         let cid1 = cid_of_data(b"1");
         let cid2 = cid_of_data(b"2");
 
-        wantlist.insert(cid1.clone());
-        wantlist.insert(cid2.clone());
+        wantlist.insert(cid1);
+        wantlist.insert(cid2);
 
         assert_eq!(
             state.generate_proto_update(&wantlist),
@@ -463,7 +454,6 @@ mod tests {
                     }
                 ],
                 full: false,
-                ..ProtoWantlist::default()
             }
         );
         assert!(state.is_updated(&wantlist));
@@ -482,7 +472,6 @@ mod tests {
                     sendDontHave: true,
                 }],
                 full: true,
-                ..ProtoWantlist::default()
             }
         );
     }
@@ -495,8 +484,8 @@ mod tests {
         let cid1 = cid_of_data(b"1");
         let cid2 = cid_of_data(b"2");
 
-        wantlist.insert(cid1.clone());
-        wantlist.insert(cid2.clone());
+        wantlist.insert(cid1);
+        wantlist.insert(cid2);
 
         assert_eq!(
             state.generate_proto_update(&wantlist),
@@ -518,7 +507,6 @@ mod tests {
                     }
                 ],
                 full: false,
-                ..ProtoWantlist::default()
             }
         );
         assert!(state.is_updated(&wantlist));
@@ -535,7 +523,6 @@ mod tests {
                     ..Default::default()
                 }],
                 full: false,
-                ..ProtoWantlist::default()
             }
         );
 
@@ -550,7 +537,6 @@ mod tests {
                     sendDontHave: true,
                 }],
                 full: true,
-                ..ProtoWantlist::default()
             }
         );
     }
