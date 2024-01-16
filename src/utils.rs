@@ -27,3 +27,27 @@ pub(crate) fn stream_protocol(
         None => Ok(StreamProtocol::new(protocol)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::RAW_CODEC;
+    use multihash_codetable::{Code, MultihashDigest};
+
+    #[test]
+    fn convert_cid_len() {
+        let hash = Code::Sha2_256.digest(&[]);
+        let cid = CidGeneric::<64>::new_v1(RAW_CODEC, hash);
+
+        assert!(convert_cid::<64, 32>(&cid).is_some());
+        assert!(convert_cid::<64, 31>(&cid).is_none());
+    }
+
+    #[test]
+    fn convert_multihash_len() {
+        let hash = Code::Sha2_256.digest(&[]);
+
+        assert!(convert_multihash::<64, 32>(&hash).is_some());
+        assert!(convert_multihash::<64, 31>(&hash).is_none());
+    }
+}

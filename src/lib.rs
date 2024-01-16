@@ -22,6 +22,8 @@ mod cid_prefix;
 mod client;
 mod message;
 mod proto;
+#[cfg(test)]
+mod test_utils;
 mod utils;
 mod wantlist;
 
@@ -84,12 +86,13 @@ where
     B: Blockstore + Send + Sync + 'static,
 {
     pub fn new(config: BitswapConfig<B>) -> Result<Self> {
-        let protocol = stream_protocol(config.protocol_prefix.as_deref(), "/ipfs/bitswap/1.2.0")?;
         let store = Arc::new(config.store);
+        let protocol_prefix = config.protocol_prefix.as_deref();
+        let protocol = stream_protocol(protocol_prefix, "/ipfs/bitswap/1.2.0")?;
 
         Ok(BitswapBehaviour {
             protocol: protocol.clone(),
-            client: ClientBehaviour::new(config.client, store, protocol),
+            client: ClientBehaviour::new(config.client, store, protocol_prefix)?,
         })
     }
 

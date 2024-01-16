@@ -23,3 +23,5 @@ void = "1.0.2"
 
 [dev-dependencies]
 hex = "0.4.3"
+multihash-codetable = { version = "0.1.1", features = ["digest", "sha2"] }
+tokio = { version = "1.35.1", features = ["rt", "macros", "time"] }

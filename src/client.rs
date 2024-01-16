@@ -26,7 +26,7 @@ use crate::cid_prefix::CidPrefix;
 use crate::message::Codec;
 use crate::proto::message::mod_Message::{BlockPresenceType, Wantlist as ProtoWantlist};
 use crate::proto::message::Message;
-use crate::utils::convert_cid;
+use crate::utils::{convert_cid, stream_protocol};
 use crate::wantlist::{Wantlist, WantlistState};
 use crate::{BitswapError, BitswapEvent, Result, ToBehaviourEvent, ToHandlerEvent};
 
@@ -95,20 +95,27 @@ impl<const S: usize, B> ClientBehaviour<S, B>
 where
     B: Blockstore + Send + Sync + 'static,
 {
-    pub(crate) fn new(config: ClientConfig, store: Arc<B>, protocol: StreamProtocol) -> Self {
-        ClientBehaviour {
+    pub(crate) fn new(
+        config: ClientConfig,
+        store: Arc<B>,
+        protocol_prefix: Option<&str>,
+    ) -> Result<Self> {
+        let protocol = stream_protocol(protocol_prefix, "/ipfs/bitswap/1.2.0")?;
+        let set_send_dont_have = config.set_send_dont_have;
+
+        Ok(ClientBehaviour {
             config: Arc::new(config),
             store,
             protocol,
             queue: VecDeque::new(),
-            wantlist: Wantlist::new(),
+            wantlist: Wantlist::new(set_send_dont_have),
             peers: FnvHashMap::default(),
             cid_to_queries: FnvHashMap::default(),
             tasks: FuturesUnordered::new(),
             query_abort_handle: FnvHashMap::default(),
             next_query_id: 0,
             waker: Arc::new(AtomicWaker::new()),
-        }
+        })
     }
 
     pub(crate) fn new_connection_handler(&mut self, peer: PeerId) -> ClientConnectionHandler<S> {
@@ -142,9 +149,11 @@ where
         let store = self.store.clone();
         let (handle, reg) = AbortHandle::new_pair();
 
+        // Try to asynchronously get the CID from the store..
         self.tasks.push(
             async move {
                 match Abortable::new(store.get(&cid), reg).await {
+                    // ..And continue the procedure in `pool`. Missing CID will be handled there.
                     Ok(res) => TaskResult::Get(query_id, cid, res),
                     Err(_) => TaskResult::Cancelled,
                 }
@@ -226,7 +235,7 @@ where
             }
         }
 
-        // TODO: If some sends a huge message, the executor will block! We need to
+        // TODO: If someone sends a huge message, the executor will block! We need to
         // truncate the data, maybe even in the `message::Codec` level
         for block in &msg.payload {
             let Some(cid_prefix) = CidPrefix::from_bytes(&block.prefix) else {
@@ -294,13 +303,9 @@ where
             };
 
             let wantlist = if send_full {
-                state
-                    .wantlist
-                    .generate_proto_full(&self.wantlist, self.config.set_send_dont_have)
+                state.wantlist.generate_proto_full(&self.wantlist)
             } else {
-                state
-                    .wantlist
-                    .generate_proto_update(&self.wantlist, self.config.set_send_dont_have)
+                state.wantlist.generate_proto_update(&self.wantlist)
             };
 
             if wantlist.entries.is_empty() {
@@ -350,8 +355,9 @@ where
                         ));
                     }
 
-                    // Blockstore doesn't have the data, add CID in the wantlist. Connection handler will
-                    // read the list and do the request.
+                    // Blockstore doesn't have the data add CID in the wantlist.
+                    //
+                    // Connection handlers will be informed via `update_handlers` about the new items in wantlist.
                     TaskResult::Get(query_id, cid, Ok(None)) => {
                         self.wantlist.insert(cid);
                         self.cid_to_queries.entry(cid).or_default().push(query_id);
@@ -500,8 +506,7 @@ impl<const S: usize> ClientConnectionHandler<S> {
                 self.on_sink_error();
             }
 
-            // We need to loop once more, so `poll_flush` will be called
-            // and register a waker.
+            // Loop again, so `poll_flush` will be called and register a waker.
         }
     }
 
@@ -530,5 +535,428 @@ impl<const S: usize> Drop for ClientConnectionHandler<S> {
                 self.behaviour_waker.wake();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::message::mod_Message::{mod_Wantlist::WantType, Block, BlockPresence};
+    use crate::test_utils::{cid_of_data, poll_fn_once, select_poll_fn, RAW_CODEC};
+    use blockstore::{Blockstore, InMemoryBlockstore};
+    use cid::Cid;
+    use futures::future::{select, Either};
+    use multihash::Multihash;
+    use multihash_codetable::{Code, MultihashDigest};
+    use std::future::poll_fn;
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    async fn blockstore() -> Arc<InMemoryBlockstore<64>> {
+        let store = Arc::new(InMemoryBlockstore::<64>::new());
+
+        for i in 0..16 {
+            let data = format!("{i}").into_bytes();
+            let cid = cid_of_data(&data);
+            store.put_keyed(&cid, &data).await.unwrap();
+        }
+
+        store
+    }
+
+    async fn new_client() -> ClientBehaviour<64, InMemoryBlockstore<64>> {
+        let store = blockstore().await;
+        ClientBehaviour::<64, _>::new(ClientConfig::default(), store, None).unwrap()
+    }
+
+    #[tokio::test]
+    async fn get_known_cid() {
+        let mut client = new_client().await;
+
+        let cid1 = cid_of_data(b"1");
+        let query_id1 = client.get(&cid1);
+
+        let cid2 = cid_of_data(b"2");
+        let query_id2 = client.get(&cid2);
+
+        for _ in 0..2 {
+            let ev = poll_fn(|cx| client.poll(cx)).await;
+
+            match ev {
+                ToSwarm::GenerateEvent(BitswapEvent::GetQueryResponse { query_id, data }) => {
+                    if query_id == query_id1 {
+                        assert_eq!(data, b"1");
+                    } else if query_id == query_id2 {
+                        assert_eq!(data, b"2");
+                    } else {
+                        unreachable!()
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn get_unknown_cid_responds_with_have() {
+        let mut client = new_client().await;
+
+        let peer1 = PeerId::random();
+        let mut conn1 = client.new_connection_handler(peer1.clone());
+
+        let peer2 = PeerId::random();
+        let mut conn2 = client.new_connection_handler(peer2.clone());
+
+        let cid1 = cid_of_data(b"x1");
+        let query_id1 = client.get(&cid1);
+
+        // Wantlist will be generated for both peers
+        for _ in 0..2 {
+            // wantlist with Have request will be generated
+            let ev = poll_fn(|cx| client.poll(cx)).await;
+
+            let (peer_id, wantlist, send_state) = match ev {
+                ToSwarm::NotifyHandler {
+                    peer_id,
+                    event: ToHandlerEvent::SendWantlist(wantlist, send_state),
+                    ..
+                } => (peer_id, wantlist, send_state),
+                _ => unreachable!(),
+            };
+
+            assert!(peer_id == peer1 || peer_id == peer2);
+            assert_eq!(wantlist.entries.len(), 1);
+            assert!(wantlist.full);
+
+            let entry = &wantlist.entries[0];
+            assert_eq!(entry.block, cid1.to_bytes());
+            assert!(!entry.cancel);
+            assert_eq!(entry.wantType, WantType::Have);
+            assert!(entry.sendDontHave);
+
+            // Mark send state as ready
+            *send_state.lock().unwrap() = SendingState::Ready;
+        }
+
+        // Simulate that peer1 responsed with Have
+        client.process_incoming_message(
+            peer1,
+            &Message {
+                blockPresences: vec![BlockPresence {
+                    cid: cid1.to_bytes(),
+                    type_pb: BlockPresenceType::Have,
+                }],
+                ..Default::default()
+            },
+        );
+
+        // wantlist with Block request will be generated
+        let ev = poll_fn(|cx| client.poll(cx)).await;
+
+        let (peer_id, wantlist, send_state) = match ev {
+            ToSwarm::NotifyHandler {
+                peer_id,
+                event: ToHandlerEvent::SendWantlist(wantlist, send_state),
+                ..
+            } => (peer_id, wantlist, send_state),
+            _ => unreachable!(),
+        };
+
+        assert_eq!(peer_id, peer1);
+        assert_eq!(wantlist.entries.len(), 1);
+        assert!(!wantlist.full);
+
+        let entry = &wantlist.entries[0];
+        assert_eq!(entry.block, cid1.to_bytes());
+        assert!(!entry.cancel);
+        assert_eq!(entry.wantType, WantType::Block);
+        assert!(entry.sendDontHave);
+    }
+
+    #[tokio::test]
+    async fn get_unknown_cid_responds_with_dont_have() {
+        let mut client = new_client().await;
+
+        let peer1 = PeerId::random();
+        let mut conn1 = client.new_connection_handler(peer1.clone());
+
+        let peer2 = PeerId::random();
+        let mut conn2 = client.new_connection_handler(peer2.clone());
+
+        let cid1 = cid_of_data(b"x1");
+        let query_id1 = client.get(&cid1);
+
+        // Wantlist will be generated for both peers
+        for _ in 0..2 {
+            // wantlist with Have request will be generated
+            let ev = poll_fn(|cx| client.poll(cx)).await;
+
+            let (peer_id, wantlist, send_state) = match ev {
+                ToSwarm::NotifyHandler {
+                    peer_id,
+                    event: ToHandlerEvent::SendWantlist(wantlist, send_state),
+                    ..
+                } => (peer_id, wantlist, send_state),
+                _ => unreachable!(),
+            };
+
+            assert!(peer_id == peer1 || peer_id == peer2);
+            assert_eq!(wantlist.entries.len(), 1);
+            assert!(wantlist.full);
+
+            let entry = &wantlist.entries[0];
+            assert_eq!(entry.block, cid1.to_bytes());
+            assert!(!entry.cancel);
+            assert_eq!(entry.wantType, WantType::Have);
+            assert!(entry.sendDontHave);
+
+            // Mark send state as ready
+            *send_state.lock().unwrap() = SendingState::Ready;
+        }
+
+        // Simulate that peer1 responsed with DontHave
+        client.process_incoming_message(
+            peer1,
+            &Message {
+                blockPresences: vec![BlockPresence {
+                    cid: cid1.to_bytes(),
+                    type_pb: BlockPresenceType::DontHave,
+                }],
+                ..Default::default()
+            },
+        );
+
+        // Simulate that full wantlist is needed
+        for peer_state in client.peers.values_mut() {
+            *peer_state.last_send_full_tm.as_mut().unwrap() -= SEND_FULL_INTERVAL;
+        }
+
+        let ev = poll_fn(|cx| client.poll(cx)).await;
+
+        let (peer_id, wantlist, send_state) = match ev {
+            ToSwarm::NotifyHandler {
+                peer_id,
+                event: ToHandlerEvent::SendWantlist(wantlist, send_state),
+                ..
+            } => (peer_id, wantlist, send_state),
+            _ => unreachable!(),
+        };
+
+        // wantlist should be generated only for peer2, because peer1 already replied with DontHave
+        assert_eq!(peer_id, peer2);
+        assert_eq!(wantlist.entries.len(), 1);
+        assert!(wantlist.full);
+
+        let entry = &wantlist.entries[0];
+        assert_eq!(entry.block, cid1.to_bytes());
+        assert!(!entry.cancel);
+        assert_eq!(entry.wantType, WantType::Have);
+        assert!(entry.sendDontHave);
+
+        // Mark send state as ready
+        *send_state.lock().unwrap() = SendingState::Ready;
+
+        // No other events should be produced
+        assert!(poll_fn_once(|cx| client.poll(cx)).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_unknown_cid_responds_with_block() {
+        let mut client = new_client().await;
+
+        let peer1 = PeerId::random();
+        let mut conn1 = client.new_connection_handler(peer1.clone());
+
+        let cid1 = cid_of_data(b"x1");
+        let query_id1 = client.get(&cid1);
+
+        // wantlist with Have request will be generated
+        let ev = poll_fn(|cx| client.poll(cx)).await;
+
+        let (peer_id, wantlist, send_state) = match ev {
+            ToSwarm::NotifyHandler {
+                peer_id,
+                event: ToHandlerEvent::SendWantlist(wantlist, send_state),
+                ..
+            } => (peer_id, wantlist, send_state),
+            _ => unreachable!(),
+        };
+
+        assert_eq!(peer_id, peer1);
+        assert_eq!(wantlist.entries.len(), 1);
+        assert!(wantlist.full);
+
+        let entry = &wantlist.entries[0];
+        assert_eq!(entry.block, cid1.to_bytes());
+        assert!(!entry.cancel);
+        assert_eq!(entry.wantType, WantType::Have);
+        assert!(entry.sendDontHave);
+
+        // Mark send state as ready
+        *send_state.lock().unwrap() = SendingState::Ready;
+
+        // Simulate that peer1 responsed with block
+        client.process_incoming_message(
+            peer1,
+            &Message {
+                payload: vec![Block {
+                    prefix: CidPrefix::from_cid(&cid1).to_bytes(),
+                    data: b"x1".to_vec(),
+                }],
+                ..Default::default()
+            },
+        );
+
+        // Receive an event with the found data
+        let ev = poll_fn(|cx| client.poll(cx)).await;
+
+        let (query_id, data) = match ev {
+            ToSwarm::GenerateEvent(BitswapEvent::GetQueryResponse { query_id, data }) => {
+                (query_id, data)
+            }
+            _ => unreachable!(),
+        };
+
+        assert_eq!(query_id, query_id1);
+        assert_eq!(data, b"x1");
+
+        // Poll once more for the store to be updated. This does not produce an event.
+        poll_fn_once(|cx| client.poll(cx)).await;
+        assert_eq!(client.store.get(&cid1).await.unwrap().unwrap(), b"x1");
+    }
+
+    #[tokio::test]
+    async fn full_wantlist_then_update() {
+        let mut client = new_client().await;
+        let mut conn = client.new_connection_handler(PeerId::random());
+
+        let cid1 = cid_of_data(b"x1");
+        let query_id1 = client.get(&cid1);
+
+        let cid2 = cid_of_data(b"x2");
+        let query_id2 = client.get(&cid2);
+
+        let ev = poll_fn(|cx| client.poll(cx)).await;
+
+        let (wantlist, send_state) = match ev {
+            ToSwarm::NotifyHandler {
+                peer_id,
+                event: ToHandlerEvent::SendWantlist(wantlist, send_state),
+                ..
+            } => (wantlist, send_state),
+            _ => unreachable!(),
+        };
+
+        assert_eq!(wantlist.entries.len(), 2);
+        assert!(wantlist.full);
+
+        let entry1 = wantlist
+            .entries
+            .iter()
+            .find(|item| item.block == cid1.to_bytes())
+            .unwrap();
+        assert!(!entry1.cancel);
+        assert_eq!(entry1.wantType, WantType::Have);
+        assert!(entry1.sendDontHave);
+
+        let entry2 = wantlist
+            .entries
+            .iter()
+            .find(|item| item.block == cid2.to_bytes())
+            .unwrap();
+        assert!(!entry2.cancel);
+        assert_eq!(entry2.wantType, WantType::Have);
+        assert!(entry2.sendDontHave);
+
+        // Mark send state as ready
+        *send_state.lock().unwrap() = SendingState::Ready;
+
+        let cid3 = cid_of_data(b"x3");
+        let query_id3 = client.get(&cid3);
+
+        let ev = poll_fn(|cx| client.poll(cx)).await;
+
+        let wantlist = match ev {
+            ToSwarm::NotifyHandler {
+                peer_id,
+                event: ToHandlerEvent::SendWantlist(wantlist, _),
+                ..
+            } => wantlist,
+            _ => unreachable!(),
+        };
+
+        assert_eq!(wantlist.entries.len(), 1);
+        assert!(!wantlist.full);
+
+        let entry = &wantlist.entries[0];
+        assert_eq!(entry.block, cid3.to_bytes());
+        assert!(!entry.cancel);
+        assert_eq!(entry.wantType, WantType::Have);
+        assert!(entry.sendDontHave);
+    }
+
+    #[tokio::test]
+    async fn request_then_cancel() {
+        let mut client = new_client().await;
+
+        let peer1 = PeerId::random();
+        let mut conn1 = client.new_connection_handler(peer1.clone());
+
+        let cid1 = cid_of_data(b"x1");
+        let query_id1 = client.get(&cid1);
+
+        let cid2 = cid_of_data(b"x2");
+        let query_id2 = client.get(&cid2);
+
+        // This cancel will not generate any messages because request was not send yet
+        client.cancel(query_id2);
+
+        // wantlist with Have request will be generated
+        let ev = poll_fn(|cx| client.poll(cx)).await;
+
+        let (peer_id, wantlist, send_state) = match ev {
+            ToSwarm::NotifyHandler {
+                peer_id,
+                event: ToHandlerEvent::SendWantlist(wantlist, send_state),
+                ..
+            } => (peer_id, wantlist, send_state),
+            _ => unreachable!(),
+        };
+
+        assert_eq!(peer_id, peer1);
+        assert_eq!(wantlist.entries.len(), 1);
+        assert!(wantlist.full);
+
+        let entry = &wantlist.entries[0];
+        assert_eq!(entry.block, cid1.to_bytes());
+        assert!(!entry.cancel);
+        assert_eq!(entry.wantType, WantType::Have);
+        assert!(entry.sendDontHave);
+
+        // Mark send state as ready
+        *send_state.lock().unwrap() = SendingState::Ready;
+
+        // This cancel should produce a message for cancelling the request
+        client.cancel(query_id1);
+
+        // wantlist with Cancel request will be generated
+        let ev = poll_fn(|cx| client.poll(cx)).await;
+
+        let (peer_id, wantlist, send_state) = match ev {
+            ToSwarm::NotifyHandler {
+                peer_id,
+                event: ToHandlerEvent::SendWantlist(wantlist, send_state),
+                ..
+            } => (peer_id, wantlist, send_state),
+            _ => unreachable!(),
+        };
+
+        assert_eq!(peer_id, peer1);
+        assert_eq!(wantlist.entries.len(), 1);
+        assert!(!wantlist.full);
+
+        let entry = &wantlist.entries[0];
+        assert_eq!(entry.block, cid1.to_bytes());
+        assert!(entry.cancel);
     }
 }
