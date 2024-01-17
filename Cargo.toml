@@ -7,17 +7,17 @@ description = "Implementation of bitswap protocol for libp2p"
 
 [dependencies]
 asynchronous-codec = "0.7.0"
-blockstore = { git = "https://github.com/eigerco/lumina", rev = "129272e" }
+blockstore = "0.1.1"
 bytes = "1.5.0"
 cid = "0.11.0"
 fnv = "1.0.7"
-futures = "0.3.29"
-libp2p = "0.53.1"
+futures = "0.3.30"
+libp2p = "0.53.2"
 multihash = "0.19.1"
 multihash-codetable = "0.1.1"
 quick-protobuf = "0.8.1"
-smallvec = "1.11.2"
-thiserror = "1.0.50"
+smallvec = "1.12.0"
+thiserror = "1.0.56"
 unsigned-varint = "0.8.0"
 void = "1.0.2"
 
