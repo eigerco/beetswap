@@ -1,7 +1,6 @@
 use cid::{CidGeneric, Version};
-use multihash_codetable::{Code, MultihashDigest};
 
-use crate::utils::convert_multihash;
+use crate::multihasher::MultihasherTable;
 
 const DAG_PB: u64 = 0x70;
 const SHA2_256: u64 = 0x12;
@@ -83,14 +82,16 @@ impl CidPrefix {
         }
     }
 
-    pub(crate) fn to_cid<const S: usize>(&self, data: &[u8]) -> Option<CidGeneric<S>> {
+    pub(crate) fn to_cid<const S: usize>(
+        &self,
+        hasher: &MultihasherTable<S>,
+        data: &[u8],
+    ) -> Option<CidGeneric<S>> {
         if self.multihash_size > S {
             return None;
         }
 
-        // TODO: Provide a way for user to have additional codetable
-        let hash = Code::try_from(self.multihash_code).ok()?.digest(data);
-        let hash = convert_multihash(&hash)?;
+        let hash = hasher.digest(self.multihash_code, data)?;
 
         CidGeneric::new(self.version, self.codec, hash).ok()
     }

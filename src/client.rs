@@ -24,6 +24,7 @@ use std::sync::Mutex;
 
 use crate::cid_prefix::CidPrefix;
 use crate::message::Codec;
+use crate::multihasher::MultihasherTable;
 use crate::proto::message::mod_Message::{BlockPresenceType, Wantlist as ProtoWantlist};
 use crate::proto::message::Message;
 use crate::utils::{convert_cid, stream_protocol};
@@ -33,7 +34,7 @@ use crate::{BitswapError, BitswapEvent, Result, ToBehaviourEvent, ToHandlerEvent
 const SEND_FULL_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct QueryId(u64);
+pub struct BitswapQueryId(u64);
 
 #[derive(Debug)]
 pub struct ClientConfig {
@@ -50,7 +51,7 @@ impl Default for ClientConfig {
 
 enum TaskResult<const S: usize> {
     Get(
-        QueryId,
+        BitswapQueryId,
         CidGeneric<S>,
         Result<Option<Vec<u8>>, BlockstoreError>,
     ),
@@ -68,11 +69,12 @@ where
     queue: VecDeque<ToSwarm<BitswapEvent, ToHandlerEvent>>,
     wantlist: Wantlist<S>,
     peers: FnvHashMap<PeerId, PeerState<S>>,
-    cid_to_queries: FnvHashMap<CidGeneric<S>, SmallVec<[QueryId; 1]>>,
+    cid_to_queries: FnvHashMap<CidGeneric<S>, SmallVec<[BitswapQueryId; 1]>>,
     tasks: FuturesUnordered<BoxFuture<'static, TaskResult<S>>>,
-    query_abort_handle: FnvHashMap<QueryId, AbortHandle>,
+    query_abort_handle: FnvHashMap<BitswapQueryId, AbortHandle>,
     next_query_id: u64,
     waker: Arc<AtomicWaker>,
+    multihasher: Arc<MultihasherTable<S>>,
 }
 
 #[derive(Debug)]
@@ -97,6 +99,7 @@ where
     pub(crate) fn new(
         config: ClientConfig,
         store: Arc<B>,
+        multihasher: Arc<MultihasherTable<S>>,
         protocol_prefix: Option<&str>,
     ) -> Result<Self> {
         let protocol = stream_protocol(protocol_prefix, "/ipfs/bitswap/1.2.0")?;
@@ -113,6 +116,7 @@ where
             query_abort_handle: FnvHashMap::default(),
             next_query_id: 0,
             waker: Arc::new(AtomicWaker::new()),
+            multihasher,
         })
     }
 
@@ -136,14 +140,14 @@ where
         }
     }
 
-    fn next_query_id(&mut self) -> QueryId {
-        let id = QueryId(self.next_query_id);
+    fn next_query_id(&mut self) -> BitswapQueryId {
+        let id = BitswapQueryId(self.next_query_id);
         self.next_query_id += 1;
         id
     }
 
     /// Schedule a `Blockstore::get` for the specified cid
-    fn schedule_store_get(&mut self, query_id: QueryId, cid: CidGeneric<S>) {
+    fn schedule_store_get(&mut self, query_id: BitswapQueryId, cid: CidGeneric<S>) {
         let store = self.store.clone();
         let (handle, reg) = AbortHandle::new_pair();
 
@@ -175,7 +179,7 @@ where
         );
     }
 
-    pub(crate) fn get<const CS: usize>(&mut self, cid: &CidGeneric<CS>) -> QueryId {
+    pub(crate) fn get<const CS: usize>(&mut self, cid: &CidGeneric<CS>) -> BitswapQueryId {
         let query_id = self.next_query_id();
 
         match convert_cid(cid) {
@@ -192,7 +196,7 @@ where
         query_id
     }
 
-    pub(crate) fn cancel(&mut self, query_id: QueryId) {
+    pub(crate) fn cancel(&mut self, query_id: BitswapQueryId) {
         if let Some(abort_handle) = self.query_abort_handle.remove(&query_id) {
             abort_handle.abort();
         }
@@ -240,7 +244,7 @@ where
                 continue;
             };
 
-            let Some(cid) = cid_prefix.to_cid(&block.data) else {
+            let Some(cid) = cid_prefix.to_cid(&self.multihasher, &block.data) else {
                 continue;
             };
 
@@ -891,7 +895,8 @@ mod tests {
 
     async fn new_client() -> ClientBehaviour<64, InMemoryBlockstore<64>> {
         let store = blockstore().await;
-        ClientBehaviour::<64, _>::new(ClientConfig::default(), store, None).unwrap()
+        let multihasher = Arc::new(MultihasherTable::<64>::new());
+        ClientBehaviour::<64, _>::new(ClientConfig::default(), store, multihasher, None).unwrap()
     }
 
     fn expect_send_wantlist_event(
