@@ -18,27 +18,29 @@ use libp2p::{
     Multiaddr, PeerId,
 };
 
+mod builder;
 mod cid_prefix;
 mod client;
 mod message;
+pub mod multihasher;
 mod proto;
 #[cfg(test)]
 mod test_utils;
-mod utils;
+pub mod utils;
 mod wantlist;
 
 use crate::client::{ClientBehaviour, ClientConnectionHandler};
 use crate::message::Codec;
 use crate::proto::message::mod_Message::Wantlist as ProtoWantlist;
 use crate::proto::message::Message;
-use crate::utils::stream_protocol;
 
-pub use crate::client::{ClientConfig, QueryId};
+pub use crate::builder::BitswapBehaviourBuilder;
+pub use crate::client::BitswapQueryId;
 
 #[derive(Debug)]
 pub struct BitswapBehaviour<const MAX_MULTIHASH_SIZE: usize, B>
 where
-    B: Blockstore + Send + Sync,
+    B: Blockstore + Send + Sync + 'static,
 {
     protocol: StreamProtocol,
     client: ClientBehaviour<MAX_MULTIHASH_SIZE, B>,
@@ -47,11 +49,11 @@ where
 #[derive(Debug)]
 pub enum BitswapEvent {
     GetQueryResponse {
-        query_id: QueryId,
+        query_id: BitswapQueryId,
         data: Vec<u8>,
     },
     GetQueryError {
-        query_id: QueryId,
+        query_id: BitswapQueryId,
         error: BitswapError,
     },
 }
@@ -61,8 +63,8 @@ pub enum BitswapError {
     #[error("Invalid multihash size")]
     InvalidMultihashSize,
 
-    #[error("Invalid protocol prefix")]
-    InvalidProtocolPrefix,
+    #[error("Invalid protocol prefix: {0}")]
+    InvalidProtocolPrefix(String),
 
     #[error("Blockstore error: {0}")]
     Blockstore(#[from] BlockstoreError),
@@ -70,37 +72,19 @@ pub enum BitswapError {
 
 pub type Result<T, E = BitswapError> = std::result::Result<T, E>;
 
-#[derive(Debug, Default)]
-pub struct BitswapConfig<B>
-where
-    B: Blockstore + Send + Sync,
-{
-    /// The prefix that will be added on `/ipfs/bitswap/1.2.0`. It must start with `/`.
-    pub protocol_prefix: Option<String>,
-    pub store: B,
-    pub client: ClientConfig,
-}
-
 impl<const MAX_MULTIHASH_SIZE: usize, B> BitswapBehaviour<MAX_MULTIHASH_SIZE, B>
 where
     B: Blockstore + Send + Sync + 'static,
 {
-    pub fn new(config: BitswapConfig<B>) -> Result<Self> {
-        let store = Arc::new(config.store);
-        let protocol_prefix = config.protocol_prefix.as_deref();
-        let protocol = stream_protocol(protocol_prefix, "/ipfs/bitswap/1.2.0")?;
-
-        Ok(BitswapBehaviour {
-            protocol: protocol.clone(),
-            client: ClientBehaviour::new(config.client, store, protocol_prefix)?,
-        })
+    pub fn builder(blockstore: B) -> BitswapBehaviourBuilder<MAX_MULTIHASH_SIZE, B> {
+        BitswapBehaviourBuilder::new(blockstore)
     }
 
-    pub fn get<const S: usize>(&mut self, cid: &CidGeneric<S>) -> QueryId {
+    pub fn get<const S: usize>(&mut self, cid: &CidGeneric<S>) -> BitswapQueryId {
         self.client.get(cid)
     }
 
-    pub fn cancel(&mut self, query_id: QueryId) {
+    pub fn cancel(&mut self, query_id: BitswapQueryId) {
         self.client.cancel(query_id)
     }
 }
@@ -110,7 +94,7 @@ impl<const MAX_MULTIHASH_SIZE: usize, B> NetworkBehaviour
 where
     B: Blockstore + Send + Sync + 'static,
 {
-    type ConnectionHandler = Handler<MAX_MULTIHASH_SIZE>;
+    type ConnectionHandler = BitswapConnectionHandler<MAX_MULTIHASH_SIZE>;
     type ToSwarm = BitswapEvent;
 
     fn handle_established_inbound_connection(
@@ -120,7 +104,7 @@ where
         _local_addr: &Multiaddr,
         _remote_addr: &Multiaddr,
     ) -> Result<Self::ConnectionHandler, ConnectionDenied> {
-        Ok(Handler {
+        Ok(BitswapConnectionHandler {
             peer,
             protocol: self.protocol.clone(),
             client_handler: self.client.new_connection_handler(peer),
@@ -135,7 +119,7 @@ where
         _addr: &Multiaddr,
         _role_override: Endpoint,
     ) -> Result<Self::ConnectionHandler, ConnectionDenied> {
-        Ok(Handler {
+        Ok(BitswapConnectionHandler {
             peer,
             protocol: self.protocol.clone(),
             client_handler: self.client.new_connection_handler(peer),
@@ -167,6 +151,7 @@ where
 }
 
 #[derive(Debug)]
+#[doc(hidden)]
 pub enum ToBehaviourEvent<const S: usize> {
     IncomingMessage(PeerId, Message),
 }
@@ -178,14 +163,16 @@ pub enum ToHandlerEvent {
 }
 
 #[derive(Debug)]
-pub struct Handler<const MAX_MULTIHASH_SIZE: usize> {
+pub struct BitswapConnectionHandler<const MAX_MULTIHASH_SIZE: usize> {
     peer: PeerId,
     protocol: StreamProtocol,
     client_handler: ClientConnectionHandler<MAX_MULTIHASH_SIZE>,
     incoming_streams: SelectAll<StreamFramedRead>,
 }
 
-impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler for Handler<MAX_MULTIHASH_SIZE> {
+impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler
+    for BitswapConnectionHandler<MAX_MULTIHASH_SIZE>
+{
     type ToBehaviour = ToBehaviourEvent<MAX_MULTIHASH_SIZE>;
     type FromBehaviour = ToHandlerEvent;
     type InboundProtocol = ReadyUpgrade<StreamProtocol>;
