@@ -74,8 +74,10 @@ where
 
     /// Register extra [`Multihasher`].
     ///
-    /// Every registration overrides the previous onces. By default `BitswapBehaviourBuilder`
-    /// is pre-loaded with [`StandardMultihasher`].
+    /// Every registration adds new hasher to `BitswapBehavior`. Hashers are used to reconstruct the `Cid` from the received data.
+    /// `BitswapBehavior` will try them in the reverse order they were registered until some successfully constructs `Multihash`.
+    /// By default `BitswapBehaviourBuilder` is pre-loaded with [`StandardMultihasher`].
+
     ///
     /// [`StandardMultihasher`]: crate::multihasher::StandardMultihasher
     pub fn register_multihasher<M>(mut self, multihasher: M) -> Self
