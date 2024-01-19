@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::sync::Arc;
 use std::task::{ready, Context, Poll};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use asynchronous_codec::FramedWrite;
 use blockstore::{Blockstore, BlockstoreError};
@@ -691,28 +691,36 @@ mod tests {
 
         // Simulate that full wantlist is needed
         for peer_state in client.peers.values_mut() {
-            *peer_state.last_send_full_tm.as_mut().unwrap() -= SEND_FULL_INTERVAL;
+            peer_state.send_full = true;
         }
 
-        let ev = poll_fn(|cx| client.poll(cx)).await;
-        let (peer_id, wantlist, send_state) = expect_send_wantlist_event(ev);
+        for _ in 0..2 {
+            let ev = poll_fn(|cx| client.poll(cx)).await;
+            let (peer_id, wantlist, send_state) = expect_send_wantlist_event(ev);
 
-        // wantlist should be generated only for peer2, because peer1 already replied with DontHave
-        assert_eq!(peer_id, peer2);
-        assert_eq!(wantlist.entries.len(), 1);
-        assert!(wantlist.full);
+            if peer_id == peer1 {
+                // full wantlist of peer1 will be empty because it alreayd replied with DontHave
+                assert!(wantlist.entries.is_empty());
+                assert!(wantlist.full);
+            } else if peer_id == peer2 {
+                assert_eq!(wantlist.entries.len(), 1);
+                assert!(wantlist.full);
 
-        let entry = &wantlist.entries[0];
-        assert_eq!(entry.block, cid1.to_bytes());
-        assert!(!entry.cancel);
-        assert_eq!(entry.wantType, WantType::Have);
-        assert!(entry.sendDontHave);
+                let entry = &wantlist.entries[0];
+                assert_eq!(entry.block, cid1.to_bytes());
+                assert!(!entry.cancel);
+                assert_eq!(entry.wantType, WantType::Have);
+                assert!(entry.sendDontHave);
+            } else {
+                panic!("Unknown peer id");
+            }
 
-        // Mark send state as ready
-        *send_state.lock().unwrap() = SendingState::Ready;
+            // Mark send state as ready
+            *send_state.lock().unwrap() = SendingState::Ready;
+        }
 
         // No other events should be produced
-        assert!(poll_fn_once(|cx| client.poll(cx)).await.is_none());
+        assert!(dbg!(poll_fn_once(|cx| client.poll(cx)).await).is_none());
     }
 
     #[tokio::test]
