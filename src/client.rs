@@ -12,6 +12,7 @@ use futures::future::{AbortHandle, Abortable, BoxFuture};
 use futures::stream::FuturesUnordered;
 use futures::task::AtomicWaker;
 use futures::{FutureExt, SinkExt, StreamExt};
+use futures_timer::Delay;
 use libp2p::swarm::NotifyHandler;
 use libp2p::PeerId;
 use libp2p::{
@@ -75,13 +76,14 @@ where
     next_query_id: u64,
     waker: Arc<AtomicWaker>,
     multihasher: Arc<MultihasherTable<S>>,
+    send_full_timer: Delay,
 }
 
 #[derive(Debug)]
 struct PeerState<const S: usize> {
     sending: Arc<Mutex<SendingState>>,
     wantlist: WantlistState<S>,
-    last_send_full_tm: Option<Instant>,
+    send_full: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,6 +119,7 @@ where
             next_query_id: 0,
             waker: Arc::new(AtomicWaker::new()),
             multihasher,
+            send_full_timer: Delay::new(SEND_FULL_INTERVAL),
         })
     }
 
@@ -126,7 +129,7 @@ where
             PeerState {
                 sending: Arc::new(Mutex::new(SendingState::Ready)),
                 wantlist: WantlistState::new(),
-                last_send_full_tm: None,
+                send_full: true,
             },
         );
 
@@ -294,12 +297,7 @@ where
                         continue;
                     }
                 }
-                SendingState::Ready => match state.last_send_full_tm {
-                    // Send full list if interval time is elapsed.
-                    Some(tm) => tm.elapsed() >= SEND_FULL_INTERVAL,
-                    // Send full list the first time.
-                    None => true,
-                },
+                SendingState::Ready => state.send_full,
                 // State is poisoned, send full list to recover.
                 SendingState::Poisoned => true,
             };
@@ -310,16 +308,13 @@ where
                 state.wantlist.generate_proto_update(&self.wantlist)
             };
 
-            if wantlist.entries.is_empty() {
-                // Nothing to send
-                //
-                // TODO: What if the send_full is true? Shouldn't we send it to clear
-                // the wantlist? However we should do it once.
+            // Allow empty entries to be sent when send_full flag is set.
+            if send_full {
+                // Reset flag
+                state.send_full = false;
+            } else if wantlist.entries.is_empty() {
+                // No updates to be sent for this peer
                 continue;
-            }
-
-            if wantlist.full {
-                state.last_send_full_tm = Some(Instant::now());
             }
 
             self.queue.push_back(ToSwarm::NotifyHandler {
@@ -343,6 +338,16 @@ where
         loop {
             if let Some(ev) = self.queue.pop_front() {
                 return Poll::Ready(ev);
+            }
+
+            if self.send_full_timer.poll_unpin(cx).is_ready() {
+                for state in self.peers.values_mut() {
+                    state.send_full = true;
+                }
+
+                // Reset timer and loop again to get it registered
+                self.send_full_timer.reset(SEND_FULL_INTERVAL);
+                continue;
             }
 
             if let Poll::Ready(Some(task_result)) = self.tasks.poll_next_unpin(cx) {
