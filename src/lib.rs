@@ -8,6 +8,7 @@ use blockstore::{Blockstore, BlockstoreError};
 use cid::CidGeneric;
 use client::SendingState;
 use futures::{stream::SelectAll, StreamExt};
+use libp2p::swarm::ConnectionClosed;
 use libp2p::{
     core::{upgrade::ReadyUpgrade, Endpoint},
     swarm::{
@@ -127,7 +128,15 @@ where
         })
     }
 
-    fn on_swarm_event(&mut self, _event: FromSwarm) {}
+    fn on_swarm_event(&mut self, event: FromSwarm) {
+        #[allow(clippy::single_match)]
+        match event {
+            FromSwarm::ConnectionClosed(ConnectionClosed { peer_id, .. }) => {
+                self.client.on_connection_closed(peer_id);
+            }
+            _ => {}
+        }
+    }
 
     fn on_connection_handler_event(
         &mut self,
