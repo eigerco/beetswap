@@ -125,19 +125,13 @@ where
     }
 
     pub(crate) fn new_connection_handler(&mut self, peer: PeerId) -> ClientConnectionHandler<S> {
-        match self.peers.entry(peer) {
-            hash_map::Entry::Occupied(mut entry) => {
-                entry.get_mut().established_connections_num += 1;
-            }
-            hash_map::Entry::Vacant(entry) => {
-                entry.insert(PeerState {
-                    established_connections_num: 1,
-                    sending: Arc::new(Mutex::new(SendingState::Ready)),
-                    wantlist: WantlistState::new(),
-                    send_full: true,
-                });
-            }
-        }
+         let peer = self.peers.entry(peer).or_insert_with(|| PeerState {
+            established_connections_num: 0,
+            sending: Arc::new(Mutex::new(SendingState::Ready)),
+            wantlist: WantlistState::new(),
+            send_full: true,
+        });
+        peer.established_connections_num += 1;
 
         ClientConnectionHandler {
             protocol: self.protocol.clone(),
