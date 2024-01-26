@@ -13,8 +13,9 @@ cid = "0.11.0"
 fnv = "1.0.7"
 futures = "0.3.30"
 futures-timer = "3.0.2"
-libp2p = "0.53.2"
-multihash = "0.19.1"
+libp2p-core = "0.41.2"
+libp2p-identity = "0.2.8"
+libp2p-swarm = "0.44.1"
 multihash-codetable = "0.1.1"
 quick-protobuf = "0.8.1"
 smallvec = "1.12.0"
@@ -24,6 +25,7 @@ void = "1.0.2"
 
 [dev-dependencies]
 hex = "0.4.3"
+libp2p-identity = { version = "0.2.8", features = ["rand"] }
 multihash-codetable = { version = "0.1.1", features = ["digest", "sha2"] }
 tokio = { version = "1.35.1", features = ["rt", "macros", "time"] }
 

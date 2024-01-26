@@ -1,6 +1,6 @@
 use cid::CidGeneric;
-use libp2p::StreamProtocol;
-use multihash::Multihash;
+use libp2p_core::multihash::Multihash;
+use libp2p_swarm::StreamProtocol;
 
 use crate::{BitswapError, Result};
 
