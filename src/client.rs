@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{hash_map, VecDeque};
 use std::fmt;
 use std::sync::Arc;
 use std::task::{ready, Context, Poll};
@@ -81,6 +81,7 @@ where
 
 #[derive(Debug)]
 struct PeerState<const S: usize> {
+    established_connections_num: usize,
     sending: Arc<Mutex<SendingState>>,
     wantlist: WantlistState<S>,
     send_full: bool,
@@ -124,14 +125,14 @@ where
     }
 
     pub(crate) fn new_connection_handler(&mut self, peer: PeerId) -> ClientConnectionHandler<S> {
-        self.peers.insert(
-            peer,
-            PeerState {
-                sending: Arc::new(Mutex::new(SendingState::Ready)),
-                wantlist: WantlistState::new(),
-                send_full: true,
-            },
-        );
+        let peer = self.peers.entry(peer).or_insert_with(|| PeerState {
+            established_connections_num: 0,
+            sending: Arc::new(Mutex::new(SendingState::Ready)),
+            wantlist: WantlistState::new(),
+            send_full: true,
+        });
+
+        peer.established_connections_num += 1;
 
         ClientConnectionHandler {
             protocol: self.protocol.clone(),
@@ -140,6 +141,16 @@ where
             wantlist: None,
             sending_state: None,
             behaviour_waker: Arc::new(AtomicWaker::new()),
+        }
+    }
+
+    pub(crate) fn on_connection_closed(&mut self, peer: PeerId) {
+        if let hash_map::Entry::Occupied(mut entry) = self.peers.entry(peer) {
+            entry.get_mut().established_connections_num -= 1;
+
+            if entry.get_mut().established_connections_num == 0 {
+                entry.remove();
+            }
         }
     }
 
