@@ -13,12 +13,10 @@ use futures::stream::FuturesUnordered;
 use futures::task::AtomicWaker;
 use futures::{FutureExt, SinkExt, StreamExt};
 use futures_timer::Delay;
-use libp2p::swarm::NotifyHandler;
-use libp2p::PeerId;
-use libp2p::{
-    core::upgrade::ReadyUpgrade,
-    swarm::{ConnectionHandlerEvent, SubstreamProtocol, ToSwarm},
-    StreamProtocol,
+use libp2p_core::upgrade::ReadyUpgrade;
+use libp2p_identity::PeerId;
+use libp2p_swarm::{
+    ConnectionHandlerEvent, NotifyHandler, StreamProtocol, SubstreamProtocol, ToSwarm,
 };
 use smallvec::SmallVec;
 use std::sync::Mutex;
@@ -415,7 +413,7 @@ where
 pub(crate) struct ClientConnectionHandler<const S: usize> {
     protocol: StreamProtocol,
     stream_requested: bool,
-    sink: Option<FramedWrite<libp2p::Stream, Codec>>,
+    sink: Option<FramedWrite<libp2p_swarm::Stream, Codec>>,
     /// Wantlist to be send
     wantlist: Option<ProtoWantlist>,
     /// Sending state of peer.
@@ -431,7 +429,7 @@ impl<const S: usize> ClientConnectionHandler<S> {
         self.stream_requested
     }
 
-    pub(crate) fn set_stream(&mut self, stream: libp2p::Stream) {
+    pub(crate) fn set_stream(&mut self, stream: libp2p_swarm::Stream) {
         // Convert `AsyncWrite` stream to `Sink`
         self.sink = Some(FramedWrite::new(stream, Codec));
         self.stream_requested = false;

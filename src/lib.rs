@@ -8,15 +8,12 @@ use blockstore::{Blockstore, BlockstoreError};
 use cid::CidGeneric;
 use client::SendingState;
 use futures::{stream::SelectAll, StreamExt};
-use libp2p::swarm::ConnectionClosed;
-use libp2p::{
-    core::{upgrade::ReadyUpgrade, Endpoint},
-    swarm::{
-        handler::ConnectionEvent, ConnectionDenied, ConnectionHandler, ConnectionHandlerEvent,
-        ConnectionId, FromSwarm, NetworkBehaviour, StreamProtocol, SubstreamProtocol,
-        THandlerInEvent, THandlerOutEvent, ToSwarm,
-    },
-    Multiaddr, PeerId,
+use libp2p_core::{multiaddr::Multiaddr, upgrade::ReadyUpgrade, Endpoint};
+use libp2p_identity::PeerId;
+use libp2p_swarm::{
+    handler::ConnectionEvent, ConnectionClosed, ConnectionDenied, ConnectionHandler,
+    ConnectionHandlerEvent, ConnectionId, FromSwarm, NetworkBehaviour, StreamProtocol,
+    SubstreamProtocol, THandlerInEvent, THandlerOutEvent, ToSwarm,
 };
 
 mod builder;
@@ -257,7 +254,7 @@ impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler
 /// Wrapper that converts `Option<Result<Message>>` to `Option<Message>`.
 ///
 /// By returning `None` on error, we instruct `SelectAll` to drop the stream.
-struct StreamFramedRead(FramedRead<libp2p::Stream, Codec>);
+struct StreamFramedRead(FramedRead<libp2p_swarm::Stream, Codec>);
 
 impl fmt::Debug for StreamFramedRead {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

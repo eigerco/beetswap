@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 
-use multihash::Multihash;
+use libp2p_core::multihash::Multihash;
 use multihash_codetable::MultihashDigest;
 
 use crate::utils::convert_multihash;

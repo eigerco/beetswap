@@ -43,7 +43,44 @@ jobs:
           cargo-
 
     - name: Run tests
-      run: cargo test
+      run: cargo test --locked
+
+
+  test-minimal-versions:
+    runs-on: ubuntu-latest
+    name: test (minimal versions)
+    steps:
+    - uses: actions/checkout@v1
+
+    - name: Install toolchain
+      uses: dtolnay/rust-toolchain@nightly
+
+    - name: Generate Cargo.lock with minimal versions
+      run: |
+        rm Cargo.lock
+        cargo +nightly update -Zminimal-versions
+
+        # multistream-select 0.13 depends on log 0.4, however it can only
+        # compile with log 0.4.4 and above. When multistream-select 0.14
+        # is released, this will not be needed.
+        cargo update -p log --precise 0.4.4
+
+    - name: Set up cargo cache
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys:
+          cargo-${{ hashFiles('**/Cargo.lock') }}
+          cargo-
+
+    - name: Run tests
+      run: cargo test --locked
 
 
   unused-deps:
@@ -62,6 +99,6 @@ jobs:
         tool: cargo-udeps@0.1.43
 
     - name: Check for unused dependencies
-      run: cargo +nightly udeps --all-features --all-targets
+      run: cargo +nightly udeps --all-targets
       env:
         RUSTFLAGS: -D warnings
