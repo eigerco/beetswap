@@ -32,6 +32,7 @@ use crate::{BitswapError, BitswapEvent, Result, ToBehaviourEvent, ToHandlerEvent
 
 const SEND_FULL_INTERVAL: Duration = Duration::from_secs(30);
 
+/// ID of an ongoing query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BitswapQueryId(u64);
 
@@ -102,11 +103,12 @@ where
         store: Arc<B>,
         multihasher: Arc<MultihasherTable<S>>,
         protocol_prefix: Option<&str>,
-    ) -> Result<Self> {
-        let protocol = stream_protocol(protocol_prefix, "/ipfs/bitswap/1.2.0")?;
+    ) -> Self {
+        let protocol = stream_protocol(protocol_prefix, "/ipfs/bitswap/1.2.0")
+            .expect("prefix checked by BitswapBehaviourBuilder::protocol_prefix");
         let set_send_dont_have = config.set_send_dont_have;
 
-        Ok(ClientBehaviour {
+        ClientBehaviour {
             store,
             protocol,
             queue: VecDeque::new(),
@@ -119,7 +121,7 @@ where
             waker: Arc::new(AtomicWaker::new()),
             multihasher,
             send_full_timer: Delay::new(SEND_FULL_INTERVAL),
-        })
+        }
     }
 
     pub(crate) fn new_connection_handler(&mut self, peer: PeerId) -> ClientConnectionHandler<S> {
@@ -195,7 +197,11 @@ where
         let query_id = self.next_query_id();
 
         match convert_cid(cid) {
+            // Schedule an asynchronous get from blockstor. The result will provided
+            // from `pool` and if CID is missing `pool` will query the network.
             Some(cid) => self.schedule_store_get(query_id, cid),
+            // In failure to convert CID an event with the error will be given to
+            // the requestor on the next `pool`.
             None => {
                 self.queue
                     .push_back(ToSwarm::GenerateEvent(BitswapEvent::GetQueryError {
@@ -217,7 +223,8 @@ where
             if let Some(pos) = queries.iter().position(|id| *id == query_id) {
                 queries.swap_remove(pos);
 
-                // If CID doesn't have any other queries requesting it, remove it completely
+                // If CID doesn't have any other queries requesting it, remove it completely.
+                // Cancel message will be send to the servers on from `pool`.
                 if queries.is_empty() {
                     // Cancelling message will be generated from `pool` method
                     let cid = cid.to_owned();
@@ -918,7 +925,7 @@ mod tests {
     async fn new_client() -> ClientBehaviour<64, InMemoryBlockstore<64>> {
         let store = blockstore().await;
         let multihasher = Arc::new(MultihasherTable::<64>::new());
-        ClientBehaviour::<64, _>::new(ClientConfig::default(), store, multihasher, None).unwrap()
+        ClientBehaviour::<64, _>::new(ClientConfig::default(), store, multihasher, None)
     }
 
     fn expect_send_wantlist_event(
