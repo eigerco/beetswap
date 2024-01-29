@@ -13,8 +13,8 @@ use crate::{BitswapBehaviour, Result};
 ///
 /// ```rust,no_run
 /// # use blockstore::InMemoryBlockstore;
-/// # use bitmingle::BitswapBehaviour;
-/// # fn main() -> bitmingle::Result<()> {
+/// # use beetswap::BitswapBehaviour;
+/// # fn main() -> beetswap::Result<()> {
 /// BitswapBehaviour::<64, _>::builder(InMemoryBlockstore::<64>::new())
 ///     .build()?;
 /// #   Ok(())
@@ -53,8 +53,8 @@ where
     ///
     /// ```rust,no_run
     /// # use blockstore::InMemoryBlockstore;
-    /// # use bitmingle::BitswapBehaviour;
-    /// # fn main() -> bitmingle::Result<()> {
+    /// # use beetswap::BitswapBehaviour;
+    /// # fn main() -> beetswap::Result<()> {
     /// BitswapBehaviour::<64, _>::builder(InMemoryBlockstore::<64>::new())
     ///     .protocol_prefix("/celestia/celestia")
     ///     .build()?;
