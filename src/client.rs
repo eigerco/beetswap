@@ -197,7 +197,7 @@ where
         let query_id = self.next_query_id();
 
         match convert_cid(cid) {
-            // Schedule an asynchronous get from blockstor. The result will provided
+            // Schedule an asynchronous get from blockstor. The result will be provided
             // from `pool` and if CID is missing `pool` will query the network.
             Some(cid) => self.schedule_store_get(query_id, cid),
             // In failure to convert CID an event with the error will be given to
