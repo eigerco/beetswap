@@ -1,4 +1,4 @@
-# bitmingle
+# beetswap
 
 Rust implementation of [`Bitswap`] protocol for [`libp2p`].
 
