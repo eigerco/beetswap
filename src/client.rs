@@ -169,7 +169,7 @@ where
         self.tasks.push(
             async move {
                 match Abortable::new(store.get(&cid), reg).await {
-                    // ..And continue the procedure in `pool`. Missing CID will be handled there.
+                    // ..And continue the procedure in `poll`. Missing CID will be handled there.
                     Ok(res) => TaskResult::Get(query_id, cid, res),
                     Err(_) => TaskResult::Cancelled,
                 }
@@ -198,10 +198,10 @@ where
 
         match convert_cid(cid) {
             // Schedule an asynchronous get from blockstor. The result will be provided
-            // from `pool` and if CID is missing `pool` will query the network.
+            // from `poll` and if CID is missing `poll` will query the network.
             Some(cid) => self.schedule_store_get(query_id, cid),
             // In failure to convert CID an event with the error will be given to
-            // the requestor on the next `pool`.
+            // the requestor on the next `poll`.
             None => {
                 self.queue
                     .push_back(ToSwarm::GenerateEvent(BitswapEvent::GetQueryError {
@@ -224,9 +224,9 @@ where
                 queries.swap_remove(pos);
 
                 // If CID doesn't have any other queries requesting it, remove it completely.
-                // Cancel message will be send to the servers on from `pool`.
+                // Cancel message will be send to the servers from `poll`.
                 if queries.is_empty() {
-                    // Cancelling message will be generated from `pool` method
+                    // Cancelling message will be generated from `poll` method
                     let cid = cid.to_owned();
                     self.cid_to_queries.remove(&cid);
                     self.wantlist.remove(&cid);
