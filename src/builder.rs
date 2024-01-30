@@ -95,7 +95,7 @@ where
     ///
     /// Every registration adds new hasher to [`BitswapBehaviour`]. Hashers are used to
     /// reconstruct the [`Cid`] from the received data. `BitswapBehaviour` will try them
-    /// in the reverse order they were registered until some successfully constructs
+    /// in the reverse order they were registered until one successfully constructs
     /// [`Multihash`].
     ///
     /// By default `BitswapBehaviourBuilder` is pre-loaded with [`StandardMultihasher`].
