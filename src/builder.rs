@@ -5,20 +5,19 @@ use blockstore::Blockstore;
 use crate::client::{ClientBehaviour, ClientConfig};
 use crate::multihasher::{Multihasher, MultihasherTable};
 use crate::utils::stream_protocol;
-use crate::{BitswapBehaviour, BitswapError, Result};
+use crate::{Behaviour, Error, Result};
 
-/// Builder for [`BitswapBehaviour`].
+/// Builder for [`Behaviour`].
 ///
 /// # Example
 ///
 /// ```rust,no_run
 /// # use blockstore::InMemoryBlockstore;
-/// # use beetswap::BitswapBehaviour;
-/// # fn new() -> BitswapBehaviour<64, InMemoryBlockstore<64>> {
-/// BitswapBehaviour::builder(InMemoryBlockstore::new())
+/// # fn new() -> beetswap::Behaviour<64, InMemoryBlockstore<64>> {
+/// beetswap::Behaviour::builder(InMemoryBlockstore::new())
 ///     .build()
 /// # }
-pub struct BitswapBehaviourBuilder<const S: usize, B>
+pub struct BehaviourBuilder<const S: usize, B>
 where
     B: Blockstore + Send + Sync + 'static,
 {
@@ -28,13 +27,13 @@ where
     multihasher: MultihasherTable<S>,
 }
 
-impl<const S: usize, B> BitswapBehaviourBuilder<S, B>
+impl<const S: usize, B> BehaviourBuilder<S, B>
 where
     B: Blockstore + Send + Sync + 'static,
 {
-    /// Creates a new builder for [`BitswapBehaviour`].
+    /// Creates a new builder for [`Behaviour`].
     pub(crate) fn new(blockstore: B) -> Self {
-        BitswapBehaviourBuilder {
+        BehaviourBuilder {
             protocol_prefix: None,
             blockstore,
             client: ClientConfig {
@@ -56,10 +55,9 @@ where
     ///
     /// ```rust,no_run
     /// # use blockstore::InMemoryBlockstore;
-    /// # use beetswap::BitswapBehaviour;
-    /// # fn new() -> beetswap::Result<BitswapBehaviour<64, InMemoryBlockstore<64>>> {
+    /// # fn new() -> beetswap::Result<beetswap::Behaviour<64, InMemoryBlockstore<64>>> {
     /// #   Ok(
-    /// BitswapBehaviour::builder(InMemoryBlockstore::new())
+    /// beetswap::Behaviour::builder(InMemoryBlockstore::new())
     ///     .protocol_prefix("/celestia/celestia")?
     ///     .build()
     /// #   )
@@ -67,7 +65,7 @@ where
     /// ```
     pub fn protocol_prefix(mut self, prefix: &str) -> Result<Self> {
         if prefix.starts_with('/') {
-            return Err(BitswapError::InvalidProtocolPrefix(prefix.to_owned()));
+            return Err(Error::InvalidProtocolPrefix(prefix.to_owned()));
         }
 
         self.protocol_prefix = Some(prefix.to_owned());
@@ -80,9 +78,8 @@ where
     ///
     /// ```rust,no_run
     /// # use blockstore::InMemoryBlockstore;
-    /// # use beetswap::BitswapBehaviour;
-    /// # fn new() -> BitswapBehaviour<64, InMemoryBlockstore<64>> {
-    /// BitswapBehaviour::builder(InMemoryBlockstore::new())
+    /// # fn new() -> beetswap::Behaviour<64, InMemoryBlockstore<64>> {
+    /// beetswap::Behaviour::builder(InMemoryBlockstore::new())
     ///     .client_set_send_dont_have(false)
     ///     .build()
     /// # }
@@ -93,12 +90,12 @@ where
 
     /// Register an extra [`Multihasher`].
     ///
-    /// Every registration adds new hasher to [`BitswapBehaviour`]. Hashers are used to
-    /// reconstruct the [`Cid`] from the received data. `BitswapBehaviour` will try them
+    /// Every registration adds new hasher to [`Behaviour`]. Hashers are used to
+    /// reconstruct the [`Cid`] from the received data. `Behaviour` will try them
     /// in the reverse order they were registered until one successfully constructs
     /// [`Multihash`].
     ///
-    /// By default `BitswapBehaviourBuilder` is pre-loaded with [`StandardMultihasher`].
+    /// By default `BehaviourBuilder` is pre-loaded with [`StandardMultihasher`].
     ///
     /// [`StandardMultihasher`]: crate::multihasher::StandardMultihasher
     /// [`Cid`]: cid::CidGeneric
@@ -111,15 +108,15 @@ where
         self
     }
 
-    /// Build a [`BitswapBehaviour`].
-    pub fn build(self) -> BitswapBehaviour<S, B> {
+    /// Build a [`Behaviour`].
+    pub fn build(self) -> Behaviour<S, B> {
         let blockstore = Arc::new(self.blockstore);
         let multihasher = Arc::new(self.multihasher);
         let protocol_prefix = self.protocol_prefix.as_deref();
 
-        BitswapBehaviour {
+        Behaviour {
             protocol: stream_protocol(protocol_prefix, "/ipfs/bitswap/1.2.0")
-                .expect("prefix checked by BitswapBehaviourBuilder::protocol_prefix"),
+                .expect("prefix checked by beetswap::BehaviourBuilder::protocol_prefix"),
             client: ClientBehaviour::new(self.client, blockstore, multihasher, protocol_prefix),
         }
     }
