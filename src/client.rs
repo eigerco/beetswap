@@ -200,7 +200,7 @@ where
             // Schedule an asynchronous get from the blockstore. The result will be provided
             // from `poll` and if CID is missing `poll` will query the network.
             Some(cid) => self.schedule_store_get(query_id, cid),
-            // In failure to convert CID an event with the error will be given to
+            // If CID conversion fails, an event with the error will be given to
             // the requestor on the next `poll`.
             None => {
                 self.queue
