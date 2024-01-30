@@ -53,7 +53,7 @@ where
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust
     /// # use blockstore::InMemoryBlockstore;
     /// # fn new() -> beetswap::Result<beetswap::Behaviour<64, InMemoryBlockstore<64>>> {
     /// #   Ok(
@@ -64,7 +64,7 @@ where
     /// # }
     /// ```
     pub fn protocol_prefix(mut self, prefix: &str) -> Result<Self> {
-        if prefix.starts_with('/') {
+        if !prefix.starts_with('/') {
             return Err(Error::InvalidProtocolPrefix(prefix.to_owned()));
         }
 
@@ -76,7 +76,7 @@ where
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust
     /// # use blockstore::InMemoryBlockstore;
     /// # fn new() -> beetswap::Behaviour<64, InMemoryBlockstore<64>> {
     /// beetswap::Behaviour::builder(InMemoryBlockstore::new())
@@ -119,5 +119,19 @@ where
                 .expect("prefix checked by beetswap::BehaviourBuilder::protocol_prefix"),
             client: ClientBehaviour::new(self.client, blockstore, multihasher, protocol_prefix),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use blockstore::InMemoryBlockstore;
+
+    #[test]
+    fn invalid_protocol_prefix() {
+        assert!(matches!(
+            BehaviourBuilder::<64, _>::new(InMemoryBlockstore::<64>::new()).protocol_prefix("foo"),
+            Err(Error::InvalidProtocolPrefix(_))
+        ));
     }
 }
