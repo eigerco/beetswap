@@ -6,11 +6,12 @@ use multihash_codetable::MultihashDigest;
 
 use crate::utils::convert_multihash;
 
+/// Trait for producing a custom [`Multihash`].
 pub trait Multihasher<const S: usize> {
     fn digest(&self, multihash_code: u64, input: &[u8]) -> Option<Multihash<S>>;
 }
 
-/// Multihasher that uses [`multihash_codetable::Code`]
+/// [`Multihasher`] that uses [`multihash_codetable::Code`]
 pub struct StandardMultihasher;
 
 impl<const S: usize> Multihasher<S> for StandardMultihasher {

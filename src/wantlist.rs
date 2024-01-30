@@ -140,14 +140,22 @@ impl<const S: usize> WantlistState<S> {
         // Update existing entries
         for (cid, req_state) in self.req_state.iter_mut() {
             match (wantlist.cids.contains(cid), *req_state) {
-                // If CID is not in wantlist but we got the block, remove it
+                // If CID is not in the wantlist that means we received
+                // its block from another peer. If we received a block
+                // from this peer too then we don't need to send a cancel
+                // message back.
                 (false, WantReqState::GotBlock) => {
+                    // Remove CID request state
                     removed.push(cid.to_owned());
                 }
 
-                // If CID is not in wantlist, cancel it
+                // If CID is not in the wantlist that means we received
+                // its block from another peer. We need to send a cancel
+                // message to this peer.
                 (false, _) => {
+                    // Remove CID request state
                     removed.push(cid.to_owned());
+                    // Add a cancel mesage
                     entries.push(new_cancel_entry(cid));
                 }
 

@@ -2,31 +2,28 @@ use cid::CidGeneric;
 use libp2p_core::multihash::Multihash;
 use libp2p_swarm::StreamProtocol;
 
-use crate::{BitswapError, Result};
-
-/// Helper utility that converts `CidGeneric<INPUT_SIZE>` to `CidGeneric<OUTPUT_SIZE>`
-pub fn convert_cid<const INPUT_S: usize, const OUTPUT_S: usize>(
-    cid: &CidGeneric<INPUT_S>,
-) -> Option<CidGeneric<OUTPUT_S>> {
+/// Helper utility that converts `CidGeneric<S>` to `CidGeneric<NEW_S>`
+pub fn convert_cid<const S: usize, const NEW_S: usize>(
+    cid: &CidGeneric<S>,
+) -> Option<CidGeneric<NEW_S>> {
     let hash = convert_multihash(cid.hash())?;
     CidGeneric::new(cid.version(), cid.codec(), hash).ok()
 }
 
-/// Helper utility that converts `Multihash<INPUT_SIZE>` to `Multihash<OUTPUT_SIZE>`
-pub fn convert_multihash<const INPUT_S: usize, const OUTPUT_S: usize>(
-    hash: &Multihash<INPUT_S>,
-) -> Option<Multihash<OUTPUT_S>> {
-    Multihash::<OUTPUT_S>::wrap(hash.code(), hash.digest()).ok()
+/// Helper utility that converts `Multihash<S>` to `Multihash<NEW_S>`
+pub fn convert_multihash<const S: usize, const NEW_S: usize>(
+    hash: &Multihash<S>,
+) -> Option<Multihash<NEW_S>> {
+    Multihash::<NEW_S>::wrap(hash.code(), hash.digest()).ok()
 }
 
 pub(crate) fn stream_protocol(
     prefix: Option<&str>,
     protocol: &'static str,
-) -> Result<StreamProtocol> {
+) -> Option<StreamProtocol> {
     match prefix {
-        Some(prefix) => StreamProtocol::try_from_owned(format!("{prefix}{protocol}"))
-            .map_err(|_| BitswapError::InvalidProtocolPrefix(prefix.to_owned())),
-        None => Ok(StreamProtocol::new(protocol)),
+        Some(prefix) => StreamProtocol::try_from_owned(format!("{prefix}{protocol}")).ok(),
+        None => Some(StreamProtocol::new(protocol)),
     }
 }
 
