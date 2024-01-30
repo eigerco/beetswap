@@ -28,13 +28,13 @@ use crate::proto::message::mod_Message::{BlockPresenceType, Wantlist as ProtoWan
 use crate::proto::message::Message;
 use crate::utils::{convert_cid, stream_protocol};
 use crate::wantlist::{Wantlist, WantlistState};
-use crate::{BitswapError, BitswapEvent, Result, ToBehaviourEvent, ToHandlerEvent};
+use crate::{Error, Event, Result, ToBehaviourEvent, ToHandlerEvent};
 
 const SEND_FULL_INTERVAL: Duration = Duration::from_secs(30);
 
 /// ID of an ongoing query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BitswapQueryId(u64);
+pub struct QueryId(u64);
 
 #[derive(Debug)]
 pub struct ClientConfig {
@@ -51,7 +51,7 @@ impl Default for ClientConfig {
 
 enum TaskResult<const S: usize> {
     Get(
-        BitswapQueryId,
+        QueryId,
         CidGeneric<S>,
         Result<Option<Vec<u8>>, BlockstoreError>,
     ),
@@ -66,12 +66,12 @@ where
 {
     store: Arc<B>,
     protocol: StreamProtocol,
-    queue: VecDeque<ToSwarm<BitswapEvent, ToHandlerEvent>>,
+    queue: VecDeque<ToSwarm<Event, ToHandlerEvent>>,
     wantlist: Wantlist<S>,
     peers: FnvHashMap<PeerId, PeerState<S>>,
-    cid_to_queries: FnvHashMap<CidGeneric<S>, SmallVec<[BitswapQueryId; 1]>>,
+    cid_to_queries: FnvHashMap<CidGeneric<S>, SmallVec<[QueryId; 1]>>,
     tasks: FuturesUnordered<BoxFuture<'static, TaskResult<S>>>,
-    query_abort_handle: FnvHashMap<BitswapQueryId, AbortHandle>,
+    query_abort_handle: FnvHashMap<QueryId, AbortHandle>,
     next_query_id: u64,
     waker: Arc<AtomicWaker>,
     multihasher: Arc<MultihasherTable<S>>,
@@ -105,7 +105,7 @@ where
         protocol_prefix: Option<&str>,
     ) -> Self {
         let protocol = stream_protocol(protocol_prefix, "/ipfs/bitswap/1.2.0")
-            .expect("prefix checked by BitswapBehaviourBuilder::protocol_prefix");
+            .expect("prefix checked by beetswap::BehaviourBuilder::protocol_prefix");
         let set_send_dont_have = config.set_send_dont_have;
 
         ClientBehaviour {
@@ -154,14 +154,14 @@ where
         }
     }
 
-    fn next_query_id(&mut self) -> BitswapQueryId {
-        let id = BitswapQueryId(self.next_query_id);
+    fn next_query_id(&mut self) -> QueryId {
+        let id = QueryId(self.next_query_id);
         self.next_query_id += 1;
         id
     }
 
     /// Schedule a `Blockstore::get` for the specified cid
-    fn schedule_store_get(&mut self, query_id: BitswapQueryId, cid: CidGeneric<S>) {
+    fn schedule_store_get(&mut self, query_id: QueryId, cid: CidGeneric<S>) {
         let store = self.store.clone();
         let (handle, reg) = AbortHandle::new_pair();
 
@@ -193,7 +193,7 @@ where
         );
     }
 
-    pub(crate) fn get<const CS: usize>(&mut self, cid: &CidGeneric<CS>) -> BitswapQueryId {
+    pub(crate) fn get<const CS: usize>(&mut self, cid: &CidGeneric<CS>) -> QueryId {
         let query_id = self.next_query_id();
 
         match convert_cid(cid) {
@@ -204,9 +204,9 @@ where
             // the requestor on the next `poll`.
             None => {
                 self.queue
-                    .push_back(ToSwarm::GenerateEvent(BitswapEvent::GetQueryError {
+                    .push_back(ToSwarm::GenerateEvent(Event::GetQueryError {
                         query_id,
-                        error: BitswapError::InvalidMultihashSize,
+                        error: Error::InvalidMultihashSize,
                     }));
             }
         }
@@ -214,7 +214,7 @@ where
         query_id
     }
 
-    pub(crate) fn cancel(&mut self, query_id: BitswapQueryId) {
+    pub(crate) fn cancel(&mut self, query_id: QueryId) {
         if let Some(abort_handle) = self.query_abort_handle.remove(&query_id) {
             abort_handle.abort();
         }
@@ -279,7 +279,7 @@ where
             if let Some(queries) = self.cid_to_queries.remove(&cid) {
                 for query_id in queries {
                     self.queue
-                        .push_back(ToSwarm::GenerateEvent(BitswapEvent::GetQueryResponse {
+                        .push_back(ToSwarm::GenerateEvent(Event::GetQueryResponse {
                             query_id,
                             data: block.data.clone(),
                         }));
@@ -347,7 +347,7 @@ where
         handler_updated
     }
 
-    pub(crate) fn poll(&mut self, cx: &mut Context) -> Poll<ToSwarm<BitswapEvent, ToHandlerEvent>> {
+    pub(crate) fn poll(&mut self, cx: &mut Context) -> Poll<ToSwarm<Event, ToHandlerEvent>> {
         // Update waker
         self.waker.register(cx.waker());
 
@@ -370,12 +370,10 @@ where
                 match task_result {
                     // Blockstore already has the data so return them to the user
                     TaskResult::Get(query_id, _, Ok(Some(data))) => {
-                        return Poll::Ready(ToSwarm::GenerateEvent(
-                            BitswapEvent::GetQueryResponse {
-                                query_id,
-                                data: data.clone(),
-                            },
-                        ));
+                        return Poll::Ready(ToSwarm::GenerateEvent(Event::GetQueryResponse {
+                            query_id,
+                            data: data.clone(),
+                        }));
                     }
 
                     // If blockstore doesn't have the data, add CID in the wantlist.
@@ -388,7 +386,7 @@ where
 
                     // Blockstore error
                     TaskResult::Get(query_id, _, Err(e)) => {
-                        return Poll::Ready(ToSwarm::GenerateEvent(BitswapEvent::GetQueryError {
+                        return Poll::Ready(ToSwarm::GenerateEvent(Event::GetQueryError {
                             query_id,
                             error: e.into(),
                         }));
@@ -583,7 +581,7 @@ mod tests {
             let ev = poll_fn(|cx| client.poll(cx)).await;
 
             match ev {
-                ToSwarm::GenerateEvent(BitswapEvent::GetQueryResponse { query_id, data }) => {
+                ToSwarm::GenerateEvent(Event::GetQueryResponse { query_id, data }) => {
                     if query_id == query_id1 {
                         assert_eq!(data, b"1");
                     } else if query_id == query_id2 {
@@ -782,9 +780,7 @@ mod tests {
         let ev = poll_fn(|cx| client.poll(cx)).await;
 
         let (query_id, data) = match ev {
-            ToSwarm::GenerateEvent(BitswapEvent::GetQueryResponse { query_id, data }) => {
-                (query_id, data)
-            }
+            ToSwarm::GenerateEvent(Event::GetQueryResponse { query_id, data }) => (query_id, data),
             _ => unreachable!(),
         };
 
@@ -929,7 +925,7 @@ mod tests {
     }
 
     fn expect_send_wantlist_event(
-        ev: ToSwarm<BitswapEvent, ToHandlerEvent>,
+        ev: ToSwarm<Event, ToHandlerEvent>,
     ) -> (PeerId, ProtoWantlist, Arc<Mutex<SendingState>>) {
         match ev {
             ToSwarm::NotifyHandler {
