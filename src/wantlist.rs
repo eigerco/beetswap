@@ -142,7 +142,7 @@ impl<const S: usize> WantlistState<S> {
             match (wantlist.cids.contains(cid), *req_state) {
                 // If CID is not in the wantlist that means we received
                 // its block from another peer. If we received a block
-                // from this peer too then we don't need to send cancel
+                // from this peer too then we don't need to send a cancel
                 // message back.
                 (false, WantReqState::GotBlock) => {
                     // Remove CID request state
