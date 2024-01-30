@@ -150,7 +150,7 @@ impl<const S: usize> WantlistState<S> {
                 }
 
                 // If CID is not in the wantlist that means we received
-                // its block from another peer. We need to send cancel
+                // its block from another peer. We need to send a cancel
                 // message to this peer.
                 (false, _) => {
                     // Remove CID request state
