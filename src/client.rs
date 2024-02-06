@@ -237,8 +237,8 @@ where
         let mut new_blocks = Vec::new();
 
         // Update presence
-        for (cid, block_presense) in msg.block_presences {
-            match block_presense {
+        for (cid, block_presence) in msg.block_presences {
+            match block_presence {
                 BlockPresenceType::Have => peer_state.wantlist.got_have(&cid),
                 BlockPresenceType::DontHave => peer_state.wantlist.got_dont_have(&cid),
             }
