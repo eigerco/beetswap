@@ -253,7 +253,7 @@ where
             }
 
             peer_state.wantlist.got_block(&cid);
-            new_blocks.push((cid.clone(), block.clone()));
+            new_blocks.push((cid, block.clone()));
 
             // Inform the upper layer for the result
             if let Some(queries) = self.cid_to_queries.remove(&cid) {
