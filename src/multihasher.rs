@@ -16,8 +16,8 @@ pub enum MultihasherError {
 
     /// Bigger [`Multihash`] is needed.
     ///
-    /// Size of [`Multihash`] is specified as generic const when [`Behaviour`]
-    /// is constructed.
+    /// Maximum allowed size of [`Multihash`] is specified as generic const when
+    /// [`Behaviour`] is constructed.
     ///
     /// [`Behaviour`]: crate::Behaviour
     #[error("Invalid multihash size")]
