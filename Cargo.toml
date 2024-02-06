@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "Implementation of bitswap protocol for libp2p"
 
 [dependencies]
+async-trait = "0.1"
 asynchronous-codec = "0.7"
 blockstore = "0.1"
 bytes = "1"
@@ -20,6 +21,7 @@ multihash-codetable = "0.1"
 quick-protobuf = "0.8"
 smallvec = "1"
 thiserror = "1"
+tracing = "0.1"
 unsigned-varint = "0.8"
 void = "1"
 
@@ -31,3 +33,6 @@ tokio = { version = "1", features = ["rt", "macros", "time"] }
 
 [features]
 wasm-bindgen = ["futures-timer/wasm-bindgen"]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docs_rs"]
