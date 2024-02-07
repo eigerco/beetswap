@@ -734,7 +734,7 @@ mod tests {
         // Mark send state as ready
         *send_state.lock().unwrap() = SendingState::Ready;
 
-        // Simulate that peer responsed with block
+        // Simulate that peer responsed with a block
         let mut client_msg = ClientMessage::default();
         client_msg.blocks.insert(cid1, b"x1".to_vec());
         client.process_incoming_message(peer, client_msg);
