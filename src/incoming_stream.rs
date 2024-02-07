@@ -87,7 +87,7 @@ impl<const S: usize> futures::Stream for IncomingStream<S> {
             let msg = match self.stream.poll_next_unpin(cx) {
                 Poll::Ready(Some(Ok(msg))) => msg,
                 Poll::Ready(Some(Err(e))) => {
-                    error!("{e}");
+                    error!("Message decoding failed: {e}");
                     return Poll::Ready(None);
                 }
                 Poll::Ready(None) => return Poll::Ready(None),

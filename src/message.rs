@@ -8,6 +8,9 @@ use quick_protobuf::{BytesReader, BytesWriter, MessageWrite, Writer, WriterBacke
 use crate::proto::message::mod_Message::mod_Wantlist::{Entry, WantType};
 use crate::proto::message::Message;
 
+/// Bitswap spec defines maximum `Message` size to 4MiB.
+pub(crate) const MAX_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
+
 pub(crate) struct Codec;
 
 #[derive(Debug, thiserror::Error)]
@@ -45,7 +48,9 @@ impl Decoder for Codec {
 
         let varint_len = src.len() - rest.len();
 
-        // TODO: if len > MAX return error
+        if varint_len > MAX_MESSAGE_SIZE {
+            return Err(io::Error::new(io::ErrorKind::Other, "Message too large"));
+        }
 
         if rest.len() < len {
             return Ok(None);
@@ -53,10 +58,9 @@ impl Decoder for Codec {
 
         let mut reader = BytesReader::from_bytes(rest);
 
-        let msg = reader.read_message_by_len(rest, len).map_err(|e| {
-            let s = format!("Message decoding failed: {e}");
-            io::Error::new(io::ErrorKind::Other, s)
-        })?;
+        let msg = reader
+            .read_message_by_len(rest, len)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
         src.advance(varint_len + len);
 
