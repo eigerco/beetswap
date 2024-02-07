@@ -49,7 +49,7 @@ impl Decoder for Codec {
         let varint_len = src.len() - rest.len();
 
         if varint_len > MAX_MESSAGE_SIZE {
-            return Err(io::Error::new(io::ErrorKind::Other, "Message too large"));
+            return Err(io::Error::other("Message too large"));
         }
 
         if rest.len() < len {
@@ -60,7 +60,7 @@ impl Decoder for Codec {
 
         let msg = reader
             .read_message_by_len(rest, len)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         src.advance(varint_len + len);
 

@@ -65,8 +65,8 @@ jobs:
         # is released, this will not be needed.
         cargo +nightly update -p log --precise 0.4.4
 
-    - name: Install 1.73.0 toolchain
-      uses: dtolnay/rust-toolchain@1.73.0
+    - name: Install stable toolchain
+      uses: dtolnay/rust-toolchain@stable
 
     - name: Set up cargo cache
       uses: actions/cache@v3
@@ -83,7 +83,7 @@ jobs:
           cargo-
 
     - name: Run tests
-      run: cargo +1.73.0 test --locked
+      run: cargo +stable test --locked
 
 
   unused-deps:
