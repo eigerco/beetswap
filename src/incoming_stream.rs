@@ -94,7 +94,7 @@ impl<const S: usize> futures::Stream for IncomingStream<S> {
                 Poll::Pending => return Poll::Pending,
             };
 
-            // Create a future that process message and converts it to `IncomingMessage`.
+            // Create a future that processes the message and converts it to `IncomingMessage`.
             self.processing = process_message(self.multihasher.clone(), msg)
                 .boxed()
                 .fuse();
