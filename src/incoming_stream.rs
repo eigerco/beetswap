@@ -159,7 +159,7 @@ async fn process_message<const S: usize>(
     }
 
     if let Some(wantlist) = msg.wantlist.take() {
-        // If wantlist if marked as full then we accept it event if it's empty.
+        // If wantlist is marked as full then we accept it even if it's empty.
         // Otherwise we accept wantlists that have 1 or more entries.
         if wantlist.full || !wantlist.entries.is_empty() {
             incoming_msg
