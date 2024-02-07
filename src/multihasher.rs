@@ -26,7 +26,7 @@ pub enum MultihasherError {
     /// Custom error.
     ///
     /// This error will be logged and the specified `input` will be ignored.
-    #[error("{0}")]
+    #[error("Hashing failure: {0}")]
     Custom(String),
 
     /// Custom error that causes [`Stream`] to close.
@@ -35,7 +35,7 @@ pub enum MultihasherError {
     /// `input` will be closed.
     ///
     /// [`Stream`]: libp2p_swarm::Stream
-    #[error("FATAL: {0}")]
+    #[error("Fatal hashing failure: {0}")]
     CustomFatal(String),
 }
 
