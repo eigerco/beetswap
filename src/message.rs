@@ -1,3 +1,5 @@
+use std::io;
+
 use asynchronous_codec::{Decoder, Encoder};
 use bytes::{Buf, BytesMut};
 use cid::CidGeneric;
@@ -8,9 +10,12 @@ use crate::proto::message::Message;
 
 pub(crate) struct Codec;
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum CodecError {}
+
 impl Encoder for Codec {
     type Item<'a> = &'a Message;
-    type Error = std::io::Error;
+    type Error = io::Error;
 
     fn encode(&mut self, msg: &Message, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let mut varint_buf = unsigned_varint::encode::usize_buffer();
@@ -31,7 +36,7 @@ impl Encoder for Codec {
 
 impl Decoder for Codec {
     type Item = Message;
-    type Error = std::io::Error;
+    type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let Ok((len, rest)) = unsigned_varint::decode::usize(&src[..]) else {
@@ -47,7 +52,11 @@ impl Decoder for Codec {
         }
 
         let mut reader = BytesReader::from_bytes(rest);
-        let msg = reader.read_message_by_len(rest, len).unwrap();
+
+        let msg = reader.read_message_by_len(rest, len).map_err(|e| {
+            let s = format!("Message decoding failed: {e}");
+            io::Error::new(io::ErrorKind::Other, s)
+        })?;
 
         src.advance(varint_len + len);
 

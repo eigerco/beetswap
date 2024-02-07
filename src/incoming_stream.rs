@@ -73,7 +73,7 @@ impl<const S: usize> futures::Stream for IncomingStream<S> {
             if !self.processing.is_terminated() {
                 match self.processing.poll_unpin(cx) {
                     Poll::Ready(Some(msg)) => {
-                        // There is no need to forward an empty message
+                        // There is no need to forward an empty message.
                         if msg.client.is_some() || msg.server.is_some() {
                             return Poll::Ready(Some(msg));
                         }
@@ -86,7 +86,11 @@ impl<const S: usize> futures::Stream for IncomingStream<S> {
             // Receive a decoded `Message` from underlying stream.
             let msg = match self.stream.poll_next_unpin(cx) {
                 Poll::Ready(Some(Ok(msg))) => msg,
-                Poll::Ready(Some(Err(_))) | Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Ready(Some(Err(e))) => {
+                    error!("{e}");
+                    return Poll::Ready(None);
+                }
+                Poll::Ready(None) => return Poll::Ready(None),
                 Poll::Pending => return Poll::Pending,
             };
 
