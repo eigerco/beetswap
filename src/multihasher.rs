@@ -112,7 +112,7 @@ impl<const S: usize> MultihasherTable<S> {
         for multihasher in &self.multihashers {
             match multihasher.hash(multihash_code, input).await {
                 Ok(hash) => return Ok(hash),
-                // `multihash_code` can not be handled my this multihasher
+                // `multihash_code` cannot be handled by this multihasher
                 // so we move to the next one.
                 Err(MultihasherError::UnknownMultihashCode) => continue,
                 Err(e) => return Err(e),
