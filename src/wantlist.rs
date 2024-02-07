@@ -204,10 +204,8 @@ impl<const S: usize> WantlistState<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        proto::message::mod_Message::mod_Wantlist::{Entry, WantType},
-        test_utils::cid_of_data,
-    };
+    use crate::proto::message::mod_Message::mod_Wantlist::{Entry, WantType};
+    use crate::test_utils::cid_of_data;
 
     #[test]
     fn insert() {

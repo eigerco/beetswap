@@ -1,3 +1,5 @@
+use std::io;
+
 use asynchronous_codec::{Decoder, Encoder};
 use bytes::{Buf, BytesMut};
 use cid::CidGeneric;
@@ -6,11 +8,17 @@ use quick_protobuf::{BytesReader, BytesWriter, MessageWrite, Writer, WriterBacke
 use crate::proto::message::mod_Message::mod_Wantlist::{Entry, WantType};
 use crate::proto::message::Message;
 
+/// Bitswap spec defines maximum `Message` size to 4MiB.
+pub(crate) const MAX_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
+
 pub(crate) struct Codec;
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum CodecError {}
 
 impl Encoder for Codec {
     type Item<'a> = &'a Message;
-    type Error = std::io::Error;
+    type Error = io::Error;
 
     fn encode(&mut self, msg: &Message, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let mut varint_buf = unsigned_varint::encode::usize_buffer();
@@ -31,7 +39,7 @@ impl Encoder for Codec {
 
 impl Decoder for Codec {
     type Item = Message;
-    type Error = std::io::Error;
+    type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let Ok((len, rest)) = unsigned_varint::decode::usize(&src[..]) else {
@@ -40,14 +48,19 @@ impl Decoder for Codec {
 
         let varint_len = src.len() - rest.len();
 
-        // TODO: if len > MAX return error
+        if varint_len > MAX_MESSAGE_SIZE {
+            return Err(io::Error::other("Message too large"));
+        }
 
         if rest.len() < len {
             return Ok(None);
         }
 
         let mut reader = BytesReader::from_bytes(rest);
-        let msg = reader.read_message_by_len(rest, len).unwrap();
+
+        let msg = reader
+            .read_message_by_len(rest, len)
+            .map_err(io::Error::other)?;
 
         src.advance(varint_len + len);
 

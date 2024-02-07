@@ -21,9 +21,8 @@ use libp2p_swarm::{
 use smallvec::SmallVec;
 use std::sync::Mutex;
 
-use crate::cid_prefix::CidPrefix;
+use crate::incoming_stream::ClientMessage;
 use crate::message::Codec;
-use crate::multihasher::MultihasherTable;
 use crate::proto::message::mod_Message::{BlockPresenceType, Wantlist as ProtoWantlist};
 use crate::proto::message::Message;
 use crate::utils::{convert_cid, stream_protocol};
@@ -74,7 +73,6 @@ where
     query_abort_handle: FnvHashMap<QueryId, AbortHandle>,
     next_query_id: u64,
     waker: Arc<AtomicWaker>,
-    multihasher: Arc<MultihasherTable<S>>,
     send_full_timer: Delay,
 }
 
@@ -98,12 +96,7 @@ impl<const S: usize, B> ClientBehaviour<S, B>
 where
     B: Blockstore + Send + Sync + 'static,
 {
-    pub(crate) fn new(
-        config: ClientConfig,
-        store: Arc<B>,
-        multihasher: Arc<MultihasherTable<S>>,
-        protocol_prefix: Option<&str>,
-    ) -> Self {
+    pub(crate) fn new(config: ClientConfig, store: Arc<B>, protocol_prefix: Option<&str>) -> Self {
         let protocol = stream_protocol(protocol_prefix, "/ipfs/bitswap/1.2.0")
             .expect("prefix checked by beetswap::BehaviourBuilder::protocol_prefix");
         let set_send_dont_have = config.set_send_dont_have;
@@ -119,7 +112,6 @@ where
             query_abort_handle: FnvHashMap::default(),
             next_query_id: 0,
             waker: Arc::new(AtomicWaker::new()),
-            multihasher,
             send_full_timer: Delay::new(SEND_FULL_INTERVAL),
         }
     }
@@ -237,7 +229,7 @@ where
         }
     }
 
-    pub(crate) fn process_incoming_message(&mut self, peer: PeerId, msg: &Message) {
+    pub(crate) fn process_incoming_message(&mut self, peer: PeerId, msg: ClientMessage<S>) {
         let Some(peer_state) = self.peers.get_mut(&peer) else {
             return;
         };
@@ -245,12 +237,8 @@ where
         let mut new_blocks = Vec::new();
 
         // Update presence
-        for block_presense in &msg.blockPresences {
-            let Ok(cid) = CidGeneric::try_from(&*block_presense.cid) else {
-                continue;
-            };
-
-            match block_presense.type_pb {
+        for (cid, block_presence) in msg.block_presences {
+            match block_presence {
                 BlockPresenceType::Have => peer_state.wantlist.got_have(&cid),
                 BlockPresenceType::DontHave => peer_state.wantlist.got_dont_have(&cid),
             }
@@ -258,22 +246,14 @@ where
 
         // TODO: If someone sends a huge message, the executor will block! We need to
         // truncate the data, maybe even in the `message::Codec` level
-        for block in &msg.payload {
-            let Some(cid_prefix) = CidPrefix::from_bytes(&block.prefix) else {
-                continue;
-            };
-
-            let Some(cid) = cid_prefix.to_cid(&self.multihasher, &block.data) else {
-                continue;
-            };
-
+        for (cid, block) in msg.blocks {
             if !self.wantlist.remove(&cid) {
                 debug_assert!(!self.cid_to_queries.contains_key(&cid));
                 continue;
             }
 
             peer_state.wantlist.got_block(&cid);
-            new_blocks.push((cid.to_owned(), block.data.clone()));
+            new_blocks.push((cid, block.clone()));
 
             // Inform the upper layer for the result
             if let Some(queries) = self.cid_to_queries.remove(&cid) {
@@ -281,7 +261,7 @@ where
                     self.queue
                         .push_back(ToSwarm::GenerateEvent(Event::GetQueryResponse {
                             query_id,
-                            data: block.data.clone(),
+                            data: block.clone(),
                         }));
                 }
             }
@@ -562,7 +542,7 @@ impl<const S: usize> Drop for ClientConnectionHandler<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::message::mod_Message::{mod_Wantlist::WantType, Block, BlockPresence};
+    use crate::proto::message::mod_Message::mod_Wantlist::WantType;
     use crate::test_utils::{cid_of_data, poll_fn_once};
     use blockstore::{Blockstore, InMemoryBlockstore};
     use std::future::poll_fn;
@@ -629,16 +609,11 @@ mod tests {
         }
 
         // Simulate that peer1 responsed with Have
-        client.process_incoming_message(
-            peer1,
-            &Message {
-                blockPresences: vec![BlockPresence {
-                    cid: cid1.to_bytes(),
-                    type_pb: BlockPresenceType::Have,
-                }],
-                ..Default::default()
-            },
-        );
+        let mut client_msg = ClientMessage::default();
+        client_msg
+            .block_presences
+            .insert(cid1, BlockPresenceType::Have);
+        client.process_incoming_message(peer1, client_msg);
 
         // wantlist with Block request will be generated
         let ev = poll_fn(|cx| client.poll(cx)).await;
@@ -692,16 +667,11 @@ mod tests {
         }
 
         // Simulate that peer1 responsed with DontHave
-        client.process_incoming_message(
-            peer1,
-            &Message {
-                blockPresences: vec![BlockPresence {
-                    cid: cid1.to_bytes(),
-                    type_pb: BlockPresenceType::DontHave,
-                }],
-                ..Default::default()
-            },
-        );
+        let mut client_msg = ClientMessage::default();
+        client_msg
+            .block_presences
+            .insert(cid1, BlockPresenceType::DontHave);
+        client.process_incoming_message(peer1, client_msg);
 
         // Simulate that full wantlist is needed
         for peer_state in client.peers.values_mut() {
@@ -764,17 +734,10 @@ mod tests {
         // Mark send state as ready
         *send_state.lock().unwrap() = SendingState::Ready;
 
-        // Simulate that peer1 responsed with block
-        client.process_incoming_message(
-            peer,
-            &Message {
-                payload: vec![Block {
-                    prefix: CidPrefix::from_cid(&cid1).to_bytes(),
-                    data: b"x1".to_vec(),
-                }],
-                ..Default::default()
-            },
-        );
+        // Simulate that peer responsed with a block
+        let mut client_msg = ClientMessage::default();
+        client_msg.blocks.insert(cid1, b"x1".to_vec());
+        client.process_incoming_message(peer, client_msg);
 
         // Receive an event with the found data
         let ev = poll_fn(|cx| client.poll(cx)).await;
@@ -920,8 +883,7 @@ mod tests {
 
     async fn new_client() -> ClientBehaviour<64, InMemoryBlockstore<64>> {
         let store = blockstore().await;
-        let multihasher = Arc::new(MultihasherTable::<64>::new());
-        ClientBehaviour::<64, _>::new(ClientConfig::default(), store, multihasher, None)
+        ClientBehaviour::<64, _>::new(ClientConfig::default(), store, None)
     }
 
     fn expect_send_wantlist_event(

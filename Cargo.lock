@@ -90,6 +90,7 @@ checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
 name = "beetswap"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "asynchronous-codec",
  "blockstore",
  "bytes",
@@ -106,6 +107,7 @@ dependencies = [
  "smallvec",
  "thiserror",
  "tokio",
+ "tracing",
  "unsigned-varint 0.8.0",
  "void",
 ]
@@ -269,9 +271,9 @@ dependencies = [
 
 [[package]]
 name = "curve25519-dalek"
-version = "4.1.1"
+version = "4.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e89b8c6a2e4b1f45971ad09761aafb85514a84744b67a95e32c3cc1352d1f65c"
+checksum = "0a677b8922c94e01bdbb12126b0bc852f00447528dee1782229af9c720c3f348"
 dependencies = [
  "cfg-if",
  "cpufeatures",

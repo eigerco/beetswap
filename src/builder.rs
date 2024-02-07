@@ -117,7 +117,8 @@ where
         Behaviour {
             protocol: stream_protocol(protocol_prefix, "/ipfs/bitswap/1.2.0")
                 .expect("prefix checked by beetswap::BehaviourBuilder::protocol_prefix"),
-            client: ClientBehaviour::new(self.client, blockstore, multihasher, protocol_prefix),
+            client: ClientBehaviour::new(self.client, blockstore, protocol_prefix),
+            multihasher,
         }
     }
 }

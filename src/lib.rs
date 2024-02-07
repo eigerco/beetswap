@@ -1,13 +1,11 @@
-use std::fmt;
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
-use asynchronous_codec::FramedRead;
 use blockstore::{Blockstore, BlockstoreError};
 use cid::CidGeneric;
 use client::SendingState;
 use futures::{stream::SelectAll, StreamExt};
+use incoming_stream::IncomingMessage;
 use libp2p_core::{multiaddr::Multiaddr, upgrade::ReadyUpgrade, Endpoint};
 use libp2p_identity::PeerId;
 use libp2p_swarm::{
@@ -19,6 +17,7 @@ use libp2p_swarm::{
 mod builder;
 mod cid_prefix;
 mod client;
+mod incoming_stream;
 mod message;
 pub mod multihasher;
 mod proto;
@@ -28,9 +27,9 @@ pub mod utils;
 mod wantlist;
 
 use crate::client::{ClientBehaviour, ClientConnectionHandler};
-use crate::message::Codec;
+use crate::incoming_stream::IncomingStream;
+use crate::multihasher::MultihasherTable;
 use crate::proto::message::mod_Message::Wantlist as ProtoWantlist;
-use crate::proto::message::Message;
 
 pub use crate::builder::BehaviourBuilder;
 pub use crate::client::QueryId;
@@ -43,6 +42,7 @@ where
 {
     protocol: StreamProtocol,
     client: ClientBehaviour<MAX_MULTIHASH_SIZE, B>,
+    multihasher: Arc<MultihasherTable<MAX_MULTIHASH_SIZE>>,
 }
 
 /// Event produced by [`Behaviour`].
@@ -116,6 +116,7 @@ where
             protocol: self.protocol.clone(),
             client_handler: self.client.new_connection_handler(peer),
             incoming_streams: SelectAll::new(),
+            multihasher: self.multihasher.clone(),
         })
     }
 
@@ -131,6 +132,7 @@ where
             protocol: self.protocol.clone(),
             client_handler: self.client.new_connection_handler(peer),
             incoming_streams: SelectAll::new(),
+            multihasher: self.multihasher.clone(),
         })
     }
 
@@ -151,8 +153,12 @@ where
         event: THandlerOutEvent<Self>,
     ) {
         match event {
-            ToBehaviourEvent::IncomingMessage(peer, msg) => {
-                self.client.process_incoming_message(peer, &msg);
+            ToBehaviourEvent::IncomingMessage(peer, mut msg) => {
+                if let Some(client_msg) = msg.client.take() {
+                    self.client.process_incoming_message(peer, client_msg);
+                }
+
+                // TODO: handle server message
             }
         }
     }
@@ -168,7 +174,7 @@ where
 #[derive(Debug)]
 #[doc(hidden)]
 pub enum ToBehaviourEvent<const S: usize> {
-    IncomingMessage(PeerId, Message),
+    IncomingMessage(PeerId, IncomingMessage<S>),
 }
 
 #[derive(Debug)]
@@ -183,7 +189,8 @@ pub struct ConnHandler<const MAX_MULTIHASH_SIZE: usize> {
     peer: PeerId,
     protocol: StreamProtocol,
     client_handler: ClientConnectionHandler<MAX_MULTIHASH_SIZE>,
-    incoming_streams: SelectAll<StreamFramedRead>,
+    incoming_streams: SelectAll<IncomingStream<MAX_MULTIHASH_SIZE>>,
+    multihasher: Arc<MultihasherTable<MAX_MULTIHASH_SIZE>>,
 }
 
 impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler for ConnHandler<MAX_MULTIHASH_SIZE> {
@@ -223,7 +230,7 @@ impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler for ConnHandler<MAX_MULT
                 }
             }
             ConnectionEvent::FullyNegotiatedInbound(ev) => {
-                let stream = StreamFramedRead(FramedRead::new(ev.protocol, Codec));
+                let stream = IncomingStream::new(ev.protocol, self.multihasher.clone());
                 self.incoming_streams.push(stream);
             }
             _ => {}
@@ -256,28 +263,5 @@ impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler for ConnHandler<MAX_MULT
         }
 
         Poll::Pending
-    }
-}
-
-/// Wrapper that converts `Option<Result<Message>>` to `Option<Message>`.
-///
-/// By returning `None` on error, we instruct `SelectAll` to drop the stream.
-struct StreamFramedRead(FramedRead<libp2p_swarm::Stream, Codec>);
-
-impl fmt::Debug for StreamFramedRead {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("StreamFramedRead")
-    }
-}
-
-impl futures::Stream for StreamFramedRead {
-    type Item = Message;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Message>> {
-        match self.0.poll_next_unpin(cx) {
-            Poll::Ready(Some(Ok(msg))) => Poll::Ready(Some(msg)),
-            Poll::Ready(Some(Err(_))) | Poll::Ready(None) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
-        }
     }
 }
