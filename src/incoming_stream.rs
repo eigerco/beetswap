@@ -116,7 +116,7 @@ async fn process_message<const S: usize>(
         let cid = match CidGeneric::try_from(&block_presence.cid[..]) {
             Ok(cid) => cid,
             Err(e) => {
-                error!("Not valid CID bytes: {}: {:?}", e, block_presence.cid);
+                error!("Invalid CID bytes: {}: {:?}", e, block_presence.cid);
                 return None;
             }
         };
