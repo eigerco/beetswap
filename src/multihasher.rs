@@ -44,9 +44,9 @@ pub enum MultihasherError {
 pub trait Multihasher<const S: usize> {
     /// Hash the `input` based on the `multihash_code`.
     ///
-    /// If this `Multihasher` can not handle the specified `multihash_code` then
+    /// If this `Multihasher` can not handle the specified `multihash_code`, then
     /// [`MultihasherError::UnknownMultihashCode`] must be returned. In this
-    /// case hashing will be tried on the next `Multihasher`. For more info check
+    /// case hashing will be re-tried with the next `Multihasher`. For more info check
     /// [`BehaviourBuilder::register_multihasher`].
     ///
     /// [`BehaviourBuilder::register_multihasher`]: crate::BehaviourBuilder::register_multihasher
