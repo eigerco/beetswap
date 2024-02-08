@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::fmt;
+use std::fmt::{self, Display};
 
 use async_trait::async_trait;
 use libp2p_core::multihash::Multihash;
@@ -37,6 +37,16 @@ pub enum MultihasherError {
     /// [`Stream`]: libp2p_swarm::Stream
     #[error("Fatal hashing failure: {0}")]
     CustomFatal(String),
+}
+
+impl MultihasherError {
+    pub fn custom(e: impl Display) -> MultihasherError {
+        MultihasherError::Custom(e.to_string())
+    }
+
+    pub fn custom_fatal(e: impl Display) -> MultihasherError {
+        MultihasherError::CustomFatal(e.to_string())
+    }
 }
 
 /// Trait for producing a custom [`Multihash`].
