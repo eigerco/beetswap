@@ -1,5 +1,6 @@
 use std::collections::{hash_map, VecDeque};
 use std::fmt;
+use std::mem::take;
 use std::sync::Arc;
 use std::task::{ready, Context, Poll};
 use std::time::Duration;
@@ -27,6 +28,7 @@ use crate::proto::message::mod_Message::{BlockPresenceType, Wantlist as ProtoWan
 use crate::proto::message::Message;
 use crate::utils::{convert_cid, stream_protocol};
 use crate::wantlist::{Wantlist, WantlistState};
+use crate::StreamRequester;
 use crate::{Error, Event, Result, ToBehaviourEvent, ToHandlerEvent};
 
 const SEND_FULL_INTERVAL: Duration = Duration::from_secs(30);
@@ -54,7 +56,7 @@ enum TaskResult<const S: usize> {
         CidGeneric<S>,
         Result<Option<Vec<u8>>, BlockstoreError>,
     ),
-    Set(Result<(), BlockstoreError>),
+    Set(Result<Vec<(CidGeneric<S>, Vec<u8>)>, BlockstoreError>),
     Cancelled,
 }
 
@@ -74,6 +76,8 @@ where
     next_query_id: u64,
     waker: Arc<AtomicWaker>,
     send_full_timer: Delay,
+
+    new_blocks: Vec<(CidGeneric<S>, Vec<u8>)>,
 }
 
 #[derive(Debug)]
@@ -113,6 +117,7 @@ where
             next_query_id: 0,
             waker: Arc::new(AtomicWaker::new()),
             send_full_timer: Delay::new(SEND_FULL_INTERVAL),
+            new_blocks: Vec::new(),
         }
     }
 
@@ -178,7 +183,10 @@ where
 
         self.tasks.push(
             async move {
-                let res = store.put_many_keyed(blocks.into_iter()).await;
+                let res = store
+                    .put_many_keyed(blocks.clone().into_iter())
+                    .await
+                    .map(|_| blocks);
                 TaskResult::Set(res)
             }
             .boxed(),
@@ -372,7 +380,9 @@ where
                         }));
                     }
 
-                    TaskResult::Set(Ok(_)) => {}
+                    TaskResult::Set(Ok(blocks)) => {
+                        self.new_blocks.extend(blocks);
+                    }
 
                     // TODO: log it
                     TaskResult::Set(Err(_e)) => {}
@@ -383,7 +393,7 @@ where
 
                 // If we didn't return an event, we need to retry the whole loop
                 continue;
-            }
+            };
 
             if self.update_handlers() {
                 // New events generated, loop again to send them.
@@ -392,6 +402,10 @@ where
 
             return Poll::Pending;
         }
+    }
+
+    pub(crate) fn get_new_blocks(&mut self) -> Vec<(CidGeneric<S>, Vec<u8>)> {
+        take(&mut self.new_blocks)
     }
 }
 
@@ -434,7 +448,9 @@ impl<const S: usize> ClientConnectionHandler<S> {
 
     fn poll_outgoing_no_stream(
         &mut self,
-    ) -> Poll<ConnectionHandlerEvent<ReadyUpgrade<StreamProtocol>, (), ToBehaviourEvent<S>>> {
+    ) -> Poll<
+        ConnectionHandlerEvent<ReadyUpgrade<StreamProtocol>, StreamRequester, ToBehaviourEvent<S>>,
+    > {
         // `stream_requested` already checked in `poll_outgoing`
         debug_assert!(!self.stream_requested);
         // `wantlist` and `sending_state` must be both `Some` or both `None`
@@ -445,13 +461,13 @@ impl<const S: usize> ClientConnectionHandler<S> {
             return Poll::Pending;
         }
 
-        // There are data to send, so request a new stream.
+        // There is data to send, so request a new stream.
         self.stream_requested = true;
 
         Poll::Ready(ConnectionHandlerEvent::OutboundSubstreamRequest {
             protocol: SubstreamProtocol::new(
                 ReadyUpgrade::new(self.protocol.clone()),
-                (), // TODO: maybe we can say here that we are the client?
+                StreamRequester::Client,
             ),
         })
     }
@@ -470,9 +486,11 @@ impl<const S: usize> ClientConnectionHandler<S> {
     fn poll_outgoing(
         &mut self,
         cx: &mut Context,
-    ) -> Poll<ConnectionHandlerEvent<ReadyUpgrade<StreamProtocol>, (), ToBehaviourEvent<S>>> {
+    ) -> Poll<
+        ConnectionHandlerEvent<ReadyUpgrade<StreamProtocol>, StreamRequester, ToBehaviourEvent<S>>,
+    > {
         loop {
-            if self.stream_requested {
+            if self.stream_requested() {
                 // We can not progress until we have a stream
                 return Poll::Pending;
             }
@@ -514,8 +532,14 @@ impl<const S: usize> ClientConnectionHandler<S> {
     pub(crate) fn poll(
         &mut self,
         cx: &mut Context,
-    ) -> Poll<ConnectionHandlerEvent<ReadyUpgrade<StreamProtocol>, (), ToBehaviourEvent<S>>> {
-        self.poll_outgoing(cx)
+    ) -> Poll<
+        ConnectionHandlerEvent<ReadyUpgrade<StreamProtocol>, StreamRequester, ToBehaviourEvent<S>>,
+    > {
+        if let Poll::Ready(ready) = self.poll_outgoing(cx) {
+            return Poll::Ready(ready);
+        }
+
+        Poll::Pending
     }
 }
 
