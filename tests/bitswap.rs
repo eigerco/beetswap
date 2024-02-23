@@ -55,16 +55,16 @@ async fn test_chain_of_nodes() {
     let _ = node1.connect(&node2);
 
     let mut node2_request = node2.request_cid(cid);
-    sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(300)).await;
     assert!(poll!(&mut node2_request).is_pending());
 
     let mut node1_request = node1.request_cid(cid);
-    sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(300)).await;
     assert!(poll!(&mut node1_request).is_pending());
     assert!(poll!(&mut node2_request).is_pending());
 
     let node0_request = node0.request_cid(cid);
-    sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(300)).await;
     let data0 = node0_request
         .now_or_never()
         .expect("data should be ready")
@@ -98,7 +98,7 @@ async fn test_node_with_data_coming_online() {
 
     let mut node0_request = node0.request_cid(cid);
     let mut node1_request = node1.request_cid(cid);
-    sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(300)).await;
     assert!(poll!(&mut node0_request).is_pending());
     assert!(poll!(&mut node1_request).is_pending());
 
@@ -106,7 +106,7 @@ async fn test_node_with_data_coming_online() {
         .connect(&node_with_data)
         .await
         .expect("could not connect");
-    sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(300)).await;
 
     let data0 = node0_request
         .now_or_never()
@@ -143,10 +143,38 @@ async fn test_node_with_invalid_data() {
         .await
         .expect("could not connect");
     let mut request = client.request_cid(cid);
-    sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(200)).await;
     assert!(poll!(&mut request).is_pending());
 
     let _ = client.connect(&node);
     let received = request.await.expect("could not get CID");
     assert_eq!(received, data.as_bytes());
+}
+
+#[tokio::test]
+async fn test_node_wishlist_updates() {
+    let data_with_cid = ["foo", "bar", "baz"].map(|d| (cid(d.as_bytes()), d));
+    let store = InMemoryBlockstore::new();
+    for (cid, data) in data_with_cid {
+        store.put_keyed(&cid, data.as_bytes()).await.unwrap()
+    }
+
+    let server = spawn_node(Some(store)).await;
+    let mut client = spawn_node(None).await;
+
+    let request0 = client.request_cid(data_with_cid[0].0);
+    client.connect(&server).await.unwrap();
+
+    let request1 = client.request_cid(data_with_cid[1].0);
+
+    let data0 = request0.await.unwrap();
+    assert_eq!(data0, data_with_cid[0].1.as_bytes());
+
+    let request2 = client.request_cid(data_with_cid[2].0);
+
+    let data1 = request1.await.unwrap();
+    let data2 = request2.await.unwrap();
+
+    assert_eq!(data1, data_with_cid[1].1.as_bytes());
+    assert_eq!(data2, data_with_cid[2].1.as_bytes());
 }

@@ -5,10 +5,11 @@ use std::mem::take;
 use std::sync::Arc;
 use std::task::{ready, Context, Poll};
 
+use smallvec::SmallVec;
 use asynchronous_codec::FramedWrite;
 use blockstore::{Blockstore, BlockstoreError};
 use cid::CidGeneric;
-use fnv::FnvHashMap;
+use fnv::{FnvHashMap, FnvHashSet};
 use futures::future::{AbortHandle, Abortable, BoxFuture};
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, SinkExt, StreamExt};
@@ -37,8 +38,9 @@ where
 {
     protocol: StreamProtocol,
     store: Arc<B>,
-    peers: FnvHashMap<PeerId, PeerState<S>>,
-    global_waitlist: FnvHashMap<CidGeneric<S>, Vec<PeerId>>,
+
+    peers_waitlists: FnvHashMap<PeerId, PeerWantlist<S>>,
+    global_waitlist: FnvHashMap<CidGeneric<S>, SmallVec<[PeerId; 1]>>,
 
     outgoing_queue: Vec<BlockWithCid<S>>,
     outgoing_event_queue: VecDeque<ToSwarm<Event, ToHandlerEvent>>,
@@ -58,73 +60,62 @@ enum BlockstoreResult<const S: usize> {
 }
 
 #[derive(Debug, Default)]
-struct PeerState<const S: usize> {
-    map: FnvHashMap<CidGeneric<S>, ()>,
-}
+struct PeerWantlist<const S: usize>(FnvHashSet<CidGeneric<S>>);
 
-impl<const S: usize> PeerState<S> {
+impl<const S: usize> PeerWantlist<S> {
     pub fn process_wantlist(&mut self, wantlist: ProtoWantlist) -> Vec<WishlistChange<S>> {
-        let (add, remove): (Vec<_>, Vec<_>) = wantlist.entries.into_iter().partition(|e| !e.cancel);
-        let add = add
-            .into_iter()
-            .map(|e| CidGeneric::try_from(e.block).unwrap())
-            .collect();
-        let remove = remove
-            .into_iter()
-            .map(|e| CidGeneric::try_from(e.block).unwrap())
-            .collect();
-
-        let mut results = vec![];
+        // XXX quietly drop invalid entries from wantlist, do we care about logging?
         if wantlist.full {
-            results.extend(self.wantlist_replace(add));
-        } else {
-            results.extend(self.wantlist_add(add));
-            results.extend(self.wantlist_remove(remove));
+            let wanted_cids = wantlist
+                .entries
+                .into_iter()
+                .filter_map(|e| {
+                    if e.cancel {
+                        return None;
+                    }
+                    CidGeneric::try_from(e.block).ok()
+                })
+                .collect();
+
+            return self.wantlist_replace(wanted_cids);
+        }
+
+        let mut results = Vec::with_capacity(wantlist.entries.len());
+
+        for entry in wantlist.entries {
+            let Ok(cid) = CidGeneric::try_from(entry.block) else {
+                continue;
+            };
+
+            if !entry.cancel {
+                if self.0.insert(cid) {
+                    results.push(WishlistChange::WantCid(cid));
+                }
+            } else {
+                if self.0.remove(&cid) {
+                    results.push(WishlistChange::DoesntWantCid(cid))
+                }
+            }
         }
 
         results
     }
 
-    fn wantlist_add(&mut self, cids: Vec<CidGeneric<S>>) -> Vec<WishlistChange<S>> {
-        let mut r = vec![];
-        for cid in cids {
-            if self.map.insert(cid, ()).is_none() {
-                r.push(WishlistChange::WantCid(cid))
-            }
-        }
-        r
-    }
+    fn wantlist_replace(&mut self, cids: FnvHashSet<CidGeneric<S>>) -> Vec<WishlistChange<S>> {
+        let wishlist_delta = cids
+            .difference(&self.0)
+            .map(|cid| WishlistChange::WantCid(*cid))
+            .chain(
+                self.0
+                    .difference(&cids)
+                    .map(|cid| WishlistChange::DoesntWantCid(*cid)),
+            );
 
-    fn wantlist_remove(&mut self, cids: Vec<CidGeneric<S>>) -> Vec<WishlistChange<S>> {
-        let mut r = vec![];
-        for cid in cids {
-            if self.map.remove(&cid).is_some() {
-                r.push(WishlistChange::DoesntWantCid(cid))
-            }
-        }
-        r
-    }
+        let wishlist_delta = wishlist_delta.collect();
 
-    fn wantlist_replace(&mut self, cids: Vec<CidGeneric<S>>) -> Vec<WishlistChange<S>> {
-        let mut r = vec![];
-        // TODO smarter algo
-        for cid in &cids {
-            if !self.map.contains_key(cid) {
-                r.push(WishlistChange::WantCid(*cid));
-            }
-        }
-        for key in self.map.keys() {
-            if !cids.contains(key) {
-                r.push(WishlistChange::DoesntWantCid(*key));
-            }
-        }
+        self.0 = cids;
 
-        self.map.clear();
-        for c in cids {
-            self.map.insert(c, ());
-        }
-
-        r
+        wishlist_delta
     }
 }
 
@@ -145,7 +136,7 @@ where
         ServerBehaviour {
             protocol,
             store,
-            peers: FnvHashMap::default(),
+            peers_waitlists: FnvHashMap::default(),
             global_waitlist: FnvHashMap::default(),
             blockstore_tasks: Default::default(),
             blockstore_tasks_abort_handles: FnvHashMap::default(),
@@ -180,7 +171,7 @@ where
 
         // remove peer from the waitlist for cid, in case we happen to get it later
         if let Entry::Occupied(mut entry) = self.global_waitlist.entry(cid) {
-            if entry.get() == &vec![peer] {
+            if entry.get().as_ref() == &[peer] {
                 entry.remove();
             } else {
                 let peers = entry.get_mut();
@@ -190,20 +181,20 @@ where
             }
         }
 
-        if let Some(peer_state) = self.peers.get_mut(&peer) {
-            peer_state.map.remove(&cid);
+        if let Some(peer_state) = self.peers_waitlists.get_mut(&peer) {
+            peer_state.0.remove(&cid);
         }
     }
 
     pub(crate) fn process_incoming_message(&mut self, peer: PeerId, msg: ServerMessage) {
         // TODO: or default once, and then rely on the data being there
         let rs = self
-            .peers
+            .peers_waitlists
             .entry(peer)
             .or_default()
             .process_wantlist(msg.wantlist);
 
-        info!("{peer}: {rs:?}");
+        debug!("{peer}: {rs:?}");
 
         for r in rs {
             match r {
@@ -213,20 +204,6 @@ where
                 }
                 WishlistChange::DoesntWantCid(cid) => {
                     self.cancel_request(peer, cid);
-                    match self.global_waitlist.entry(cid) {
-                        Entry::Occupied(mut entry) => {
-                            let v = entry.get_mut();
-                            // TODO better algo?
-                            if let Some(index) = v.iter().position(|p| *p == peer) {
-                                v.swap_remove(index);
-                            } else {
-                                warn!("Requesting to remove CID for unexpected peer");
-                            }
-                        }
-                        Entry::Vacant(_) => {
-                            warn!("Requesting to remove unexpected CID from wishlist")
-                        }
-                    }
                 }
             }
         }
@@ -237,7 +214,7 @@ where
     }
 
     pub(crate) fn new_connection_handler(&mut self, peer: PeerId) -> ServerConnectionHandler<S> {
-        self.peers.entry(peer).or_default();
+        self.peers_waitlists.entry(peer).or_default();
 
         ServerConnectionHandler {
             protocol: self.protocol.clone(),
