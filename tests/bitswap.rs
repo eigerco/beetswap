@@ -1,3 +1,5 @@
+use std::mem::drop;
+
 use blockstore::{Blockstore, InMemoryBlockstore};
 use futures::{future::FutureExt, poll};
 use tokio::time::{sleep, Duration};
@@ -16,7 +18,7 @@ async fn test_client_request() {
     let server = spawn_node(Some(store)).await;
     let mut client = spawn_node(None).await;
 
-    let _ = client.connect(&server);
+    drop(client.connect(&server));
     let received = client.request_cid(cid).await.expect("could not get CID");
 
     assert_eq!(&received[..], data.as_bytes());
@@ -32,7 +34,7 @@ async fn test_server_request() {
     let mut client = spawn_node(Some(store)).await;
     let mut server = spawn_node(None).await;
 
-    let _ = client.connect(&server);
+    drop(client.connect(&server));
     let received = server.request_cid(cid).await.expect("could not get CID");
 
     assert_eq!(&received[..], data.as_bytes());
@@ -50,9 +52,9 @@ async fn test_chain_of_nodes() {
     let mut node1 = spawn_node(None).await;
     let mut node2 = spawn_node(None).await;
 
-    let _ = node_with_data.connect(&node0);
-    let _ = node0.connect(&node1);
-    let _ = node1.connect(&node2);
+    drop(node_with_data.connect(&node0));
+    drop(node0.connect(&node1));
+    drop(node1.connect(&node2));
 
     let mut node2_request = node2.request_cid(cid);
     sleep(Duration::from_millis(300)).await;
@@ -94,7 +96,7 @@ async fn test_node_with_data_coming_online() {
 
     let mut node0 = spawn_node(None).await;
     let mut node1 = spawn_node(None).await;
-    let _ = node0.connect(&node1);
+    drop(node0.connect(&node1));
 
     let mut node0_request = node0.request_cid(cid);
     let mut node1_request = node1.request_cid(cid);
@@ -146,7 +148,7 @@ async fn test_node_with_invalid_data() {
     sleep(Duration::from_millis(200)).await;
     assert!(poll!(&mut request).is_pending());
 
-    let _ = client.connect(&node);
+    drop(client.connect(&node));
     let received = request.await.expect("could not get CID");
     assert_eq!(received, data.as_bytes());
 }

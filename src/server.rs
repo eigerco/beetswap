@@ -91,10 +91,8 @@ impl<const S: usize> PeerWantlist<S> {
                 if self.0.insert(cid) {
                     results.push(WishlistChange::WantCid(cid));
                 }
-            } else {
-                if self.0.remove(&cid) {
-                    results.push(WishlistChange::DoesntWantCid(cid))
-                }
+            } else if self.0.remove(&cid) {
+                results.push(WishlistChange::DoesntWantCid(cid))
             }
         }
 
@@ -171,7 +169,7 @@ where
 
         // remove peer from the waitlist for cid, in case we happen to get it later
         if let Entry::Occupied(mut entry) = self.global_waitlist.entry(cid) {
-            if entry.get().as_ref() == &[peer] {
+            if entry.get().as_ref() == [peer] {
                 entry.remove();
             } else {
                 let peers = entry.get_mut();
@@ -417,8 +415,6 @@ impl<const S: usize> ServerConnectionHandler<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{cid_of_data, poll_fn_once};
-    use blockstore::{Blockstore, InMemoryBlockstore};
     use cid::Cid;
     use multihash::Multihash;
 
@@ -475,15 +471,5 @@ mod tests {
         for cid in removed_cids {
             assert!(events.contains(&WishlistChange::DoesntWantCid(cid)));
         }
-    }
-
-    async fn new_client() -> ServerBehaviour<64, InMemoryBlockstore<64>> {
-        let store = Arc::new(InMemoryBlockstore::<64>::new());
-        for i in 0..16 {
-            let data = format!("{i}").into_bytes();
-            let cid = cid_of_data(&data);
-            store.put_keyed(&cid, &data).await.unwrap();
-        }
-        ServerBehaviour::<64, _>::new(store, None)
     }
 }

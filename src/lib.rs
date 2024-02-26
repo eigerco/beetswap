@@ -179,24 +179,22 @@ where
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<ToSwarm<Self::ToSwarm, THandlerInEvent<Self>>> {
-        loop {
-            if let ready @ Poll::Ready(_) = self.client.poll(cx) {
-                return ready;
-            }
-
-            let new_blocks = self.client.get_new_blocks();
-            if !new_blocks.is_empty() {
-                self.server.new_blocks_available(new_blocks);
-            }
-
-            // call server last so that it can process new blocks from client and blockstore
-            // together
-            if let ready @ Poll::Ready(_) = self.server.poll(cx) {
-                return ready;
-            }
-
-            return Poll::Pending;
+        if let ready @ Poll::Ready(_) = self.client.poll(cx) {
+            return ready;
         }
+
+        let new_blocks = self.client.get_new_blocks();
+        if !new_blocks.is_empty() {
+            self.server.new_blocks_available(new_blocks);
+        }
+
+        // call server last so that it can process new blocks from client and blockstore
+        // together
+        if let ready @ Poll::Ready(_) = self.server.poll(cx) {
+            return ready;
+        }
+
+        Poll::Pending
     }
 }
 
