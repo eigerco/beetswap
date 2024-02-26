@@ -310,6 +310,7 @@ dependencies = [
  "libp2p-noise",
  "libp2p-swarm",
  "libp2p-yamux",
+ "multihash",
  "multihash-codetable",
  "quick-protobuf",
  "smallvec",

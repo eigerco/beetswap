@@ -5,7 +5,6 @@ use std::mem::take;
 use std::sync::Arc;
 use std::task::{ready, Context, Poll};
 
-use smallvec::SmallVec;
 use asynchronous_codec::FramedWrite;
 use blockstore::{Blockstore, BlockstoreError};
 use cid::CidGeneric;
@@ -18,6 +17,7 @@ use libp2p_identity::PeerId;
 use libp2p_swarm::{
     ConnectionHandlerEvent, NotifyHandler, StreamProtocol, SubstreamProtocol, ToSwarm,
 };
+use smallvec::SmallVec;
 use tracing::{debug, info, trace, warn};
 
 use crate::incoming_stream::ServerMessage;
@@ -119,7 +119,7 @@ impl<const S: usize> PeerWantlist<S> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum WishlistChange<const S: usize> {
     WantCid(CidGeneric<S>),
     DoesntWantCid(CidGeneric<S>),
@@ -411,5 +411,79 @@ impl<const S: usize> ServerConnectionHandler<S> {
         ConnectionHandlerEvent<ReadyUpgrade<StreamProtocol>, StreamRequester, ToBehaviourEvent<S>>,
     > {
         self.poll_outgoing(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::{cid_of_data, poll_fn_once};
+    use blockstore::{Blockstore, InMemoryBlockstore};
+    use cid::Cid;
+    use multihash::Multihash;
+
+    #[test]
+    fn wishlist_replace() {
+        let initial_cids =
+            (0..512_i32).map(|v| Cid::new_v1(24, Multihash::wrap(42, &v.to_le_bytes()).unwrap()));
+        let replacing_cids = (513..1024_i32)
+            .map(|v| Cid::new_v1(24, Multihash::wrap(42, &v.to_le_bytes()).unwrap()));
+
+        let mut wantlist = PeerWantlist::<64>::default();
+        let initial_events = wantlist.wantlist_replace(initial_cids.clone().collect());
+        assert_eq!(initial_cids.len(), initial_events.len());
+        for cid in initial_cids.clone() {
+            assert!(initial_events.contains(&WishlistChange::WantCid(cid)));
+        }
+
+        let replacing_events = wantlist.wantlist_replace(replacing_cids.clone().collect());
+        assert_eq!(
+            replacing_events.len(),
+            initial_cids.len() + replacing_cids.len()
+        );
+        for cid in replacing_cids {
+            assert!(replacing_events.contains(&WishlistChange::WantCid(cid)));
+        }
+        for cid in initial_cids {
+            assert!(replacing_events.contains(&WishlistChange::DoesntWantCid(cid)));
+        }
+    }
+
+    #[test]
+    fn wishlist_replace_overlaping() {
+        let initial_cids = (0..600_i32)
+            .map(|v| Cid::new_v1(24, Multihash::wrap(42, &v.to_le_bytes()).unwrap()))
+            .collect();
+        let replacing_cids = (500..1000_i32)
+            .map(|v| Cid::new_v1(24, Multihash::wrap(42, &v.to_le_bytes()).unwrap()))
+            .collect();
+
+        let mut wantlist = PeerWantlist::<64>::default();
+        wantlist.wantlist_replace(initial_cids);
+        let events = wantlist.wantlist_replace(replacing_cids);
+
+        let removed_cids: Vec<_> = (0..500_i32)
+            .map(|v| Cid::new_v1(24, Multihash::wrap(42, &v.to_le_bytes()).unwrap()))
+            .collect();
+        let added_cids: Vec<_> = (600..1000_i32)
+            .map(|v| Cid::new_v1(24, Multihash::wrap(42, &v.to_le_bytes()).unwrap()))
+            .collect();
+        assert_eq!(events.len(), added_cids.len() + removed_cids.len());
+        for cid in added_cids {
+            assert!(events.contains(&WishlistChange::WantCid(cid)));
+        }
+        for cid in removed_cids {
+            assert!(events.contains(&WishlistChange::DoesntWantCid(cid)));
+        }
+    }
+
+    async fn new_client() -> ServerBehaviour<64, InMemoryBlockstore<64>> {
+        let store = Arc::new(InMemoryBlockstore::<64>::new());
+        for i in 0..16 {
+            let data = format!("{i}").into_bytes();
+            let cid = cid_of_data(&data);
+            store.put_keyed(&cid, &data).await.unwrap();
+        }
+        ServerBehaviour::<64, _>::new(store, None)
     }
 }
