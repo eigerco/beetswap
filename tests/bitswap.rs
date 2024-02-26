@@ -1,5 +1,3 @@
-use std::mem::drop;
-
 use blockstore::{Blockstore, InMemoryBlockstore};
 use futures::{future::FutureExt, poll};
 use tokio::time::{sleep, Duration};
