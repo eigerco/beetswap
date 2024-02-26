@@ -424,10 +424,6 @@ pub(crate) struct ClientConnectionHandler<const S: usize> {
 }
 
 impl<const S: usize> ClientConnectionHandler<S> {
-    pub(crate) fn stream_requested(&self) -> bool {
-        self.stream_requested
-    }
-
     pub(crate) fn set_stream(&mut self, stream: libp2p_swarm::Stream) {
         // Convert `AsyncWrite` stream to `Sink`
         self.sink = Some(FramedWrite::new(stream, Codec));
@@ -490,7 +486,7 @@ impl<const S: usize> ClientConnectionHandler<S> {
         ConnectionHandlerEvent<ReadyUpgrade<StreamProtocol>, StreamRequester, ToBehaviourEvent<S>>,
     > {
         loop {
-            if self.stream_requested() {
+            if self.stream_requested {
                 // We can not progress until we have a stream
                 return Poll::Pending;
             }
@@ -568,7 +564,7 @@ mod tests {
     use super::*;
     use crate::proto::message::mod_Message::mod_Wantlist::WantType;
     use crate::test_utils::{cid_of_data, poll_fn_once};
-    use blockstore::{Blockstore, InMemoryBlockstore};
+    use blockstore::InMemoryBlockstore;
     use std::future::poll_fn;
 
     #[tokio::test]
