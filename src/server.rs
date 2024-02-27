@@ -119,8 +119,8 @@ impl<const S: usize> PeerWantlist<S> {
 
 #[derive(Debug, PartialEq)]
 enum WishlistChange<const S: usize> {
-    WantCid(CidGeneric<S>),
-    DoesntWantCid(CidGeneric<S>),
+    Want(CidGeneric<S>),
+    DontWant(CidGeneric<S>),
 }
 
 impl<const S: usize, B> ServerBehaviour<S, B>
