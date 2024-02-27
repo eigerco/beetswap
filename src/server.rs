@@ -36,40 +36,48 @@ pub(crate) struct ServerBehaviour<const S: usize, B>
 where
     B: Blockstore,
 {
+    /// protocol, used to create connection handler
     protocol: StreamProtocol,
+    /// blockstore to fetch blocks from
     store: Arc<B>,
-
-    peers_waitlists: FnvHashMap<PeerId, PeerWantlist<S>>,
-    global_waitlist: FnvHashMap<CidGeneric<S>, SmallVec<[PeerId; 1]>>,
-
+    /// list of CIDs each connected peer is waiting for
+    peers_wantlists: FnvHashMap<PeerId, PeerWantlist<S>>,
+    /// list of peers that wait for particular CID
+    peers_waiting_for_cid: FnvHashMap<CidGeneric<S>, SmallVec<[PeerId; 1]>>,
+    /// list of blocks received from blockstore or network, that connected peers may be waiting for
     outgoing_queue: Vec<BlockWithCid<S>>,
+    /// list of events to be sent back to swarm when poll is called
     outgoing_event_queue: VecDeque<ToSwarm<Event, ToHandlerEvent>>,
-
-    blockstore_tasks: FuturesUnordered<BoxFuture<'static, BlockstoreResult<S>>>,
-    blockstore_tasks_abort_handles: FnvHashMap<(PeerId, CidGeneric<S>), AbortHandle>,
+    /// list of long running tasks, currently used to interact with the store
+    tasks: FuturesUnordered<BoxFuture<'static, TaskResult<S>>>,
+    /// abort handles to cancel above tasks
+    task_abort_handles: FnvHashMap<(PeerId, CidGeneric<S>), AbortHandle>,
 }
 
-#[derive(Debug)]
-enum BlockstoreResult<const S: usize> {
+enum TaskResult<const S: usize> {
     Get(
         PeerId,
-        CidGeneric<S>,
-        Result<Option<Vec<u8>>, BlockstoreError>,
+        Vec<GetCidResult<S>>, //CidGeneric<S>,
+                              //Result<Option<Vec<u8>>, BlockstoreError>,
     ),
     Cancelled,
 }
 
-#[derive(Debug, PartialEq)]
-enum WantlistChange<const S: usize> {
-    Want(CidGeneric<S>),
-    DontWant(CidGeneric<S>),
+struct GetCidResult<const S: usize> {
+    cid: CidGeneric<S>,
+    data: Result<Option<Vec<u8>>, BlockstoreError>,
 }
 
 #[derive(Debug, Default)]
 struct PeerWantlist<const S: usize>(FnvHashSet<CidGeneric<S>>);
 
 impl<const S: usize> PeerWantlist<S> {
-    pub fn process_wantlist(&mut self, wantlist: ProtoWantlist) -> Vec<WantlistChange<S>> {
+    /// Updates peers wantlist according to received message. Returns tuple with CIDs added and
+    /// CIDs removed from wantlist.
+    fn process_wantlist(
+        &mut self,
+        wantlist: ProtoWantlist,
+    ) -> (Vec<CidGeneric<S>>, Vec<CidGeneric<S>>) {
         // XXX quietly drop invalid entries from wantlist, do we care about logging?
         if wantlist.full {
             let wanted_cids = wantlist
@@ -86,7 +94,9 @@ impl<const S: usize> PeerWantlist<S> {
             return self.wantlist_replace(wanted_cids);
         }
 
-        let mut results = Vec::with_capacity(wantlist.entries.len());
+        // overallocates memory, but makes sure we don't re-allocate
+        let mut additions = Vec::with_capacity(wantlist.entries.len());
+        let mut removals = Vec::with_capacity(wantlist.entries.len());
 
         for entry in wantlist.entries {
             let Ok(cid) = CidGeneric::try_from(entry.block) else {
@@ -95,31 +105,26 @@ impl<const S: usize> PeerWantlist<S> {
 
             if !entry.cancel {
                 if self.0.insert(cid) {
-                    results.push(WantlistChange::Want(cid));
+                    additions.push(cid);
                 }
             } else if self.0.remove(&cid) {
-                results.push(WantlistChange::DontWant(cid))
+                removals.push(cid);
             }
         }
 
-        results
+        (additions, removals)
     }
 
-    fn wantlist_replace(&mut self, cids: FnvHashSet<CidGeneric<S>>) -> Vec<WantlistChange<S>> {
-        let delta = cids
-            .difference(&self.0)
-            .map(|cid| WantlistChange::Want(*cid))
-            .chain(
-                self.0
-                    .difference(&cids)
-                    .map(|cid| WantlistChange::DontWant(*cid)),
-            );
-
-        let delta = delta.collect();
+    fn wantlist_replace(
+        &mut self,
+        cids: FnvHashSet<CidGeneric<S>>,
+    ) -> (Vec<CidGeneric<S>>, Vec<CidGeneric<S>>) {
+        let additions = cids.difference(&self.0).copied().collect();
+        let removals = self.0.difference(&cids).copied().collect();
 
         self.0 = cids;
 
-        delta
+        (additions, removals)
     }
 }
 
@@ -134,41 +139,41 @@ where
         ServerBehaviour {
             protocol,
             store,
-            peers_waitlists: FnvHashMap::default(),
-            global_waitlist: FnvHashMap::default(),
-            blockstore_tasks: Default::default(),
-            blockstore_tasks_abort_handles: FnvHashMap::default(),
+            peers_wantlists: Default::default(),
+            peers_waiting_for_cid: Default::default(),
+            tasks: Default::default(),
+            task_abort_handles: Default::default(),
             outgoing_queue: Default::default(),
             outgoing_event_queue: Default::default(),
         }
     }
 
-    fn schedule_store_get(&mut self, peer: PeerId, cid: CidGeneric<S>) {
+    fn schedule_store_get(&mut self, peer: PeerId, cids: Vec<CidGeneric<S>>) {
         let store = self.store.clone();
-        let (handle, reg) = AbortHandle::new_pair();
+        let (_handle, reg) = AbortHandle::new_pair();
 
-        self.blockstore_tasks.push(
+        self.tasks.push(
             async move {
-                match Abortable::new(store.get(&cid), reg).await {
-                    Ok(result) => BlockstoreResult::Get(peer, cid, result),
-                    Err(_) => BlockstoreResult::Cancelled,
+                match Abortable::new(get_multiple_cids_from_store(store, cids), reg).await {
+                    Ok(result) => TaskResult::Get(peer, result),
+                    Err(_) => TaskResult::Cancelled,
                 }
             }
             .boxed(),
         );
 
-        self.blockstore_tasks_abort_handles
-            .insert((peer, cid), handle);
+        // TODO: re-implement cancelling
+        //self.task_abort_handles.insert((peer, cid), handle);
     }
 
     fn cancel_request(&mut self, peer: PeerId, cid: CidGeneric<S>) {
         // remove pending blockstore read, if any
-        if let Some(abort_handle) = self.blockstore_tasks_abort_handles.remove(&(peer, cid)) {
+        if let Some(abort_handle) = self.task_abort_handles.remove(&(peer, cid)) {
             abort_handle.abort();
         }
 
         // remove peer from the waitlist for cid, in case we happen to get it later
-        if let Entry::Occupied(mut entry) = self.global_waitlist.entry(cid) {
+        if let Entry::Occupied(mut entry) = self.peers_waiting_for_cid.entry(cid) {
             if entry.get().as_ref() == [peer] {
                 entry.remove();
             } else {
@@ -179,30 +184,34 @@ where
             }
         }
 
-        if let Some(peer_state) = self.peers_waitlists.get_mut(&peer) {
+        if let Some(peer_state) = self.peers_wantlists.get_mut(&peer) {
             peer_state.0.remove(&cid);
         }
     }
 
     pub(crate) fn process_incoming_message(&mut self, peer: PeerId, msg: ServerMessage) {
-        let Some(wantlist) = self.peers_waitlists.get_mut(&peer) else {
+        let Some(wantlist) = self.peers_wantlists.get_mut(&peer) else {
             return; // entry should have been created in `new_connection_handler`
         };
 
-        let wantlist_changes = wantlist.process_wantlist(msg.wantlist);
+        let (additions, removals) = wantlist.process_wantlist(msg.wantlist);
 
-        debug!("updating local wantlist for {peer}: {wantlist_changes:?}");
+        debug!(
+            "updating local wantlist for {peer}: added {}, removed {}",
+            additions.len(),
+            removals.len()
+        );
 
-        for change in wantlist_changes {
-            match change {
-                WantlistChange::Want(cid) => {
-                    self.schedule_store_get(peer, cid);
-                    self.global_waitlist.entry(cid).or_default().push(peer);
-                }
-                WantlistChange::DontWant(cid) => {
-                    self.cancel_request(peer, cid);
-                }
-            }
+        for cid in &additions {
+            self.peers_waiting_for_cid
+                .entry(*cid)
+                .or_default()
+                .push(peer);
+        }
+        self.schedule_store_get(peer, additions);
+
+        for cid in removals {
+            self.cancel_request(peer, cid);
         }
     }
 
@@ -211,7 +220,7 @@ where
     }
 
     pub(crate) fn new_connection_handler(&mut self, peer: PeerId) -> ServerConnectionHandler<S> {
-        self.peers_waitlists.entry(peer).or_default();
+        self.peers_wantlists.entry(peer).or_default();
 
         ServerConnectionHandler {
             protocol: self.protocol.clone(),
@@ -230,7 +239,7 @@ where
         let mut peer_to_block = FnvHashMap::<PeerId, Vec<(Vec<u8>, Vec<u8>)>>::default();
 
         for (cid, data) in outgoing {
-            let Some(waitlist) = self.global_waitlist.remove(&cid) else {
+            let Some(waitlist) = self.peers_waiting_for_cid.remove(&cid) else {
                 continue;
             };
 
@@ -259,28 +268,50 @@ where
         true
     }
 
+    fn process_store_get_results(&mut self, peer: PeerId, results: Vec<GetCidResult<S>>) {
+        for result in results {
+            let cid = result.cid;
+            match result.data {
+                Ok(None) => {
+                    // requested CID isn't present locally. If we happen to get it, we'll
+                    // forward it to the peer later
+                    debug!("Cid {cid} not in blockstore for {peer}");
+                }
+                Ok(Some(data)) => {
+                    trace!("Cid {cid} for {peer} present in blockstore");
+                    self.outgoing_queue.push((cid, data));
+                }
+                Err(e) => {
+                    warn!("Fetching {cid} from blockstore failed: {e}");
+                }
+            }
+        }
+    }
+
     pub(crate) fn poll(&mut self, cx: &mut Context) -> Poll<ToSwarm<Event, ToHandlerEvent>> {
         loop {
             if let Some(ev) = self.outgoing_event_queue.pop_front() {
                 return Poll::Ready(ev);
             }
 
-            if let Poll::Ready(Some(blockstore_result)) = self.blockstore_tasks.poll_next_unpin(cx)
-            {
-                match blockstore_result {
-                    BlockstoreResult::Get(peer, cid, Ok(None)) => {
+            if let Poll::Ready(Some(task_result)) = self.tasks.poll_next_unpin(cx) {
+                match task_result {
+                    TaskResult::Get(peer, results) => self.process_store_get_results(peer, results),
+                    /*
+                    TaskResult::Get(peer, cid, Ok(None)) => {
                         // requested CID isn't present locally. If we happen to get it, we'll
                         // forward it to the peer later
                         debug!("Cid {cid} not in blockstore for {peer}");
                     }
-                    BlockstoreResult::Get(peer, cid, Ok(Some(data))) => {
+                    TaskResult::Get(peer, cid, Ok(Some(data))) => {
                         trace!("Cid {cid} for {peer} present in blockstore");
                         self.outgoing_queue.push((cid, data));
                     }
-                    BlockstoreResult::Get(_peer, cid, Err(error)) => {
+                    TaskResult::Get(_peer, cid, Err(error)) => {
                         warn!("Fetching {cid} from blockstore failed: {error}");
                     }
-                    BlockstoreResult::Cancelled => (),
+                    */
+                    TaskResult::Cancelled => (),
                 }
                 continue;
             }
@@ -360,10 +391,18 @@ impl<const S: usize> ServerConnectionHandler<S> {
                     if ready!(sink.poll_flush_unpin(cx)).is_err() {
                         self.close_sink("poll_flush_unpin");
                     }
+
+                    // entire message was sent, no more data pending - closing
+                    self.sink = SinkState::None;
                     return Poll::Pending;
                 }
                 (Some(_), SinkState::None) => return self.open_new_substream(),
                 (pending_messages @ Some(_), SinkState::Ready(sink)) => {
+                    if ready!(sink.poll_flush_unpin(cx)).is_err() {
+                        self.close_sink("poll_flush_unpin before sending message");
+                        continue;
+                    }
+
                     let messages = pending_messages
                         .take()
                         .expect("pending_messages can't be None here");
@@ -371,11 +410,6 @@ impl<const S: usize> ServerConnectionHandler<S> {
                         payload: messages,
                         ..Message::default()
                     };
-
-                    if ready!(sink.poll_flush_unpin(cx)).is_err() {
-                        self.close_sink("poll_flush_unpin");
-                        continue;
-                    }
 
                     if sink.start_send_unpin(&message).is_err() {
                         self.close_sink("start_send_unpin");
@@ -401,6 +435,20 @@ impl<const S: usize> ServerConnectionHandler<S> {
     }
 }
 
+async fn get_multiple_cids_from_store<const S: usize, B: Blockstore>(
+    store: Arc<B>,
+    cids: Vec<CidGeneric<S>>,
+) -> Vec<GetCidResult<S>> {
+    let mut results = Vec::with_capacity(cids.len());
+
+    for cid in cids {
+        let data = store.get(&cid).await;
+        results.push(GetCidResult { cid, data });
+    }
+
+    results
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,27 +462,25 @@ mod tests {
     #[test]
     fn wantlist_replace() {
         let initial_cids =
-            (0..512_i32).map(|v| Cid::new_v1(24, Multihash::wrap(42, &v.to_le_bytes()).unwrap()));
-        let replacing_cids = (513..1024_i32)
+            (0..500_i32).map(|v| Cid::new_v1(24, Multihash::wrap(42, &v.to_le_bytes()).unwrap()));
+        let replacing_cids = (600..1200_i32)
             .map(|v| Cid::new_v1(24, Multihash::wrap(42, &v.to_le_bytes()).unwrap()));
 
         let mut wantlist = PeerWantlist::<64>::default();
-        let initial_events = wantlist.wantlist_replace(initial_cids.clone().collect());
+        let (initial_events, _) = wantlist.wantlist_replace(initial_cids.clone().collect());
         assert_eq!(initial_cids.len(), initial_events.len());
         for cid in initial_cids.clone() {
-            assert!(initial_events.contains(&WantlistChange::Want(cid)));
+            assert!(initial_events.contains(&cid));
         }
 
-        let replacing_events = wantlist.wantlist_replace(replacing_cids.clone().collect());
-        assert_eq!(
-            replacing_events.len(),
-            initial_cids.len() + replacing_cids.len()
-        );
+        let (added, removed) = wantlist.wantlist_replace(replacing_cids.clone().collect());
+        assert_eq!(added.len(), replacing_cids.len());
+        assert_eq!(removed.len(), initial_cids.len());
         for cid in replacing_cids {
-            assert!(replacing_events.contains(&WantlistChange::Want(cid)));
+            assert!(added.contains(&cid));
         }
         for cid in initial_cids {
-            assert!(replacing_events.contains(&WantlistChange::DontWant(cid)));
+            assert!(removed.contains(&cid));
         }
     }
 
@@ -449,7 +495,7 @@ mod tests {
 
         let mut wantlist = PeerWantlist::<64>::default();
         wantlist.wantlist_replace(initial_cids);
-        let events = wantlist.wantlist_replace(replacing_cids);
+        let (added, removed) = wantlist.wantlist_replace(replacing_cids);
 
         let removed_cids: Vec<_> = (0..500_i32)
             .map(|v| Cid::new_v1(24, Multihash::wrap(42, &v.to_le_bytes()).unwrap()))
@@ -457,12 +503,13 @@ mod tests {
         let added_cids: Vec<_> = (600..1000_i32)
             .map(|v| Cid::new_v1(24, Multihash::wrap(42, &v.to_le_bytes()).unwrap()))
             .collect();
-        assert_eq!(events.len(), added_cids.len() + removed_cids.len());
+        assert_eq!(added.len(), added_cids.len());
+        assert_eq!(removed.len(), removed_cids.len());
         for cid in added_cids {
-            assert!(events.contains(&WantlistChange::Want(cid)));
+            assert!(added.contains(&cid));
         }
         for cid in removed_cids {
-            assert!(events.contains(&WantlistChange::DontWant(cid)));
+            assert!(removed.contains(&cid));
         }
     }
 
