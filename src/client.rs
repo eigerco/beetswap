@@ -392,7 +392,7 @@ where
 
                 // If we didn't return an event, we need to retry the whole loop
                 continue;
-            };
+            }
 
             if self.update_handlers() {
                 // New events generated, loop again to send them.
