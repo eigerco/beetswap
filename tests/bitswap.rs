@@ -8,34 +8,43 @@ mod utils;
 
 #[tokio::test]
 async fn test_client_request() {
-    let data = "foo";
-    let cid = cid(data.as_bytes());
+    let data_with_cid = ["foo", "bar", "baz"].map(|d| (cid(d.as_bytes()), d));
     let store = InMemoryBlockstore::new();
-    store.put_keyed(&cid, data.as_ref()).await.unwrap();
-
+    for (cid, data) in data_with_cid {
+        store.put_keyed(&cid, data.as_bytes()).await.unwrap()
+    }
     let server = spawn_node(Some(store)).await;
     let mut client = spawn_node(None).await;
 
-    drop(client.connect(&server));
-    let received = client.request_cid(cid).await.expect("could not get CID");
+    let received0 = client.request_cid(data_with_cid[0].0);
 
-    assert_eq!(&received[..], data.as_bytes());
+    drop(client.connect(&server));
+    let received1 = client.request_cid(data_with_cid[1].0).await.expect("could not get CID");
+    let received0 = received0.await.expect("could not get CID");
+
+    assert_eq!(&received0[..], data_with_cid[0].1.as_bytes());
+    assert_eq!(&received1[..], data_with_cid[1].1.as_bytes());
 }
 
 #[tokio::test]
 async fn test_server_request() {
-    let data = "foo";
-    let cid = cid(data.as_bytes());
+    let data_with_cid = ["foo", "bar", "baz"].map(|d| (cid(d.as_bytes()), d));
     let store = InMemoryBlockstore::new();
-    store.put_keyed(&cid, data.as_ref()).await.unwrap();
+    for (cid, data) in data_with_cid {
+        store.put_keyed(&cid, data.as_bytes()).await.unwrap()
+    }
 
     let mut client = spawn_node(Some(store)).await;
     let mut server = spawn_node(None).await;
 
-    drop(client.connect(&server));
-    let received = server.request_cid(cid).await.expect("could not get CID");
+    let received0 = client.request_cid(data_with_cid[0].0);
 
-    assert_eq!(&received[..], data.as_bytes());
+    drop(client.connect(&server));
+    let received1 = server.request_cid(data_with_cid[1].0).await.expect("could not get CID");
+    let received0 = received0.await.expect("Could not get CID");
+
+    assert_eq!(&received0[..], data_with_cid[0].1.as_bytes());
+    assert_eq!(&received1[..], data_with_cid[1].1.as_bytes());
 }
 
 #[tokio::test]

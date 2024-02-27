@@ -185,17 +185,16 @@ where
     }
 
     pub(crate) fn process_incoming_message(&mut self, peer: PeerId, msg: ServerMessage) {
-        // TODO: or default once, and then rely on the data being there
-        let rs = self
-            .peers_waitlists
-            .entry(peer)
-            .or_default()
-            .process_wantlist(msg.wantlist);
+        let Some(wantlist) = self.peers_waitlists.get_mut(&peer) else {
+            return; // entry should have been created in `new_connection_handler`
+        };
 
-        debug!("{peer}: {rs:?}");
+        let wantlist_changes = wantlist.process_wantlist(msg.wantlist);
 
-        for r in rs {
-            match r {
+        debug!("updating local wantlist for {peer}: {wantlist_changes:?}");
+
+        for change in wantlist_changes {
+            match change {
                 WishlistChange::WantCid(cid) => {
                     self.schedule_store_get(peer, cid);
                     self.global_waitlist.entry(cid).or_default().push(peer);
@@ -415,6 +414,8 @@ impl<const S: usize> ServerConnectionHandler<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::{cid_of_data, poll_fn_once};
+    use blockstore::{Blockstore, InMemoryBlockstore};
     use cid::Cid;
     use multihash::Multihash;
 
@@ -471,5 +472,20 @@ mod tests {
         for cid in removed_cids {
             assert!(events.contains(&WishlistChange::DoesntWantCid(cid)));
         }
+    }
+
+    #[tokio::test]
+    async fn client_requests_known_cid() {
+        let mut server = new_server().await;
+    }
+
+    async fn new_server() -> ServerBehaviour<64, InMemoryBlockstore<64>> {
+        let store = Arc::new(InMemoryBlockstore::<64>::new());
+        for i in 0..16 {
+            let data = format!("{i}").into_bytes();
+            let cid = cid_of_data(&data);
+            store.put_keyed(&cid, &data).await.unwrap();
+        }
+        ServerBehaviour::<64, _>::new(store, None)
     }
 }
