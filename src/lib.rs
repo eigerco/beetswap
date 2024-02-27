@@ -209,7 +209,7 @@ pub enum ToBehaviourEvent<const S: usize> {
 #[doc(hidden)]
 pub enum ToHandlerEvent {
     SendWantlist(ProtoWantlist, Arc<Mutex<SendingState>>),
-    SendSendlist(Vec<(Vec<u8>, Vec<u8>)>),
+    QueueOutgoingMessages(Vec<(Vec<u8>, Vec<u8>)>),
 }
 
 pub enum StreamRequester {
@@ -245,8 +245,8 @@ impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler for ConnHandler<MAX_MULT
             ToHandlerEvent::SendWantlist(wantlist, state) => {
                 self.client_handler.send_wantlist(wantlist, state);
             }
-            ToHandlerEvent::SendSendlist(data) => {
-                self.server_handler.send_sendlist(data);
+            ToHandlerEvent::QueueOutgoingMessages(data) => {
+                self.server_handler.queue_messages(data);
             }
         }
     }

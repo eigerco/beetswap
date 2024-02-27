@@ -19,7 +19,10 @@ async fn test_client_request() {
     let received0 = client.request_cid(data_with_cid[0].0);
 
     drop(client.connect(&server));
-    let received1 = client.request_cid(data_with_cid[1].0).await.expect("could not get CID");
+    let received1 = client
+        .request_cid(data_with_cid[1].0)
+        .await
+        .expect("could not get CID");
     let received0 = received0.await.expect("could not get CID");
 
     assert_eq!(&received0[..], data_with_cid[0].1.as_bytes());
@@ -40,7 +43,10 @@ async fn test_server_request() {
     let received0 = client.request_cid(data_with_cid[0].0);
 
     drop(client.connect(&server));
-    let received1 = server.request_cid(data_with_cid[1].0).await.expect("could not get CID");
+    let received1 = server
+        .request_cid(data_with_cid[1].0)
+        .await
+        .expect("could not get CID");
     let received0 = received0.await.expect("Could not get CID");
 
     assert_eq!(&received0[..], data_with_cid[0].1.as_bytes());
