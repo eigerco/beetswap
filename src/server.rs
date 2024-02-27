@@ -34,7 +34,7 @@ type BlockWithCid<const S: usize> = (CidGeneric<S>, Vec<u8>);
 #[derive(Debug)]
 pub(crate) struct ServerBehaviour<const S: usize, B>
 where
-    B: Blockstore + Send + Send,
+    B: Blockstore,
 {
     protocol: StreamProtocol,
     store: Arc<B>,
@@ -119,8 +119,8 @@ impl<const S: usize> PeerWantlist<S> {
 
 #[derive(Debug, PartialEq)]
 enum WishlistChange<const S: usize> {
-    WantCid(CidGeneric<S>),
-    DoesntWantCid(CidGeneric<S>),
+    Want(CidGeneric<S>),
+    DontWant(CidGeneric<S>),
 }
 
 impl<const S: usize, B> ServerBehaviour<S, B>

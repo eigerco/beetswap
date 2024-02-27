@@ -76,7 +76,6 @@ where
     next_query_id: u64,
     waker: Arc<AtomicWaker>,
     send_full_timer: Delay,
-
     new_blocks: Vec<(CidGeneric<S>, Vec<u8>)>,
 }
 
