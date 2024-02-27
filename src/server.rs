@@ -364,7 +364,9 @@ impl<const S: usize> ServerConnectionHandler<S> {
                 }
                 (Some(_), SinkState::None) => return self.open_new_substream(),
                 (pending_messages @ Some(_), SinkState::Ready(sink)) => {
-                    let messages = pending_messages.take().expect("pending_messages can't be None here");
+                    let messages = pending_messages
+                        .take()
+                        .expect("pending_messages can't be None here");
                     let message = Message {
                         payload: messages,
                         ..Message::default()
@@ -402,10 +404,12 @@ impl<const S: usize> ServerConnectionHandler<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{cid_of_data, poll_fn_once};
-    use blockstore::{Blockstore, InMemoryBlockstore};
+    use crate::proto::message::mod_Message::mod_Wantlist::{Entry, WantType};
+    use crate::test_utils::cid_of_data;
+    use blockstore::InMemoryBlockstore;
     use cid::Cid;
     use multihash::Multihash;
+    use std::future::poll_fn;
 
     #[test]
     fn wantlist_replace() {
@@ -464,7 +468,36 @@ mod tests {
 
     #[tokio::test]
     async fn client_requests_known_cid() {
+        let data = "1";
+        let cid = cid_of_data(data.as_bytes());
+        let message = ServerMessage {
+            wantlist: ProtoWantlist {
+                full: true,
+                entries: vec![Entry {
+                    cancel: false,
+                    priority: 0,
+                    sendDontHave: false,
+                    block: cid.into(),
+                    wantType: WantType::Block,
+                }],
+            },
+        };
+        let peer = PeerId::random();
+
         let mut server = new_server().await;
+        let _client_connection = server.new_connection_handler(peer);
+        server.process_incoming_message(peer, message);
+
+        let ev = poll_fn(|cx| server.poll(cx)).await;
+
+        let ToSwarm::NotifyHandler { peer_id, event, .. } = ev else {
+            panic!("Unexpected event {ev:?}");
+        };
+        assert_eq!(peer_id, peer);
+        let ToHandlerEvent::QueueOutgoingMessages(msgs) = event else {
+            panic!("Invalid handler message type ");
+        };
+        assert_eq!(msgs, vec![(cid.into(), data.as_bytes().to_vec())]);
     }
 
     async fn new_server() -> ServerBehaviour<64, InMemoryBlockstore<64>> {
