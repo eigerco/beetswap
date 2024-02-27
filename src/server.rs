@@ -34,7 +34,7 @@ type BlockWithCid<const S: usize> = (CidGeneric<S>, Vec<u8>);
 #[derive(Debug)]
 pub(crate) struct ServerBehaviour<const S: usize, B>
 where
-    B: Blockstore + Send + Send,
+    B: Blockstore,
 {
     protocol: StreamProtocol,
     store: Arc<B>,
