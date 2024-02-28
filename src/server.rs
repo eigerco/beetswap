@@ -436,7 +436,7 @@ async fn get_multiple_cids_from_store<const S: usize, B: Blockstore>(
 mod tests {
     use super::*;
     use crate::proto::message::mod_Message::mod_Wantlist::{Entry, WantType};
-    use crate::test_utils::cid_of_data;
+    use crate::test_utils::{cid_of_data, poll_fn_once};
     use blockstore::InMemoryBlockstore;
     use cid::Cid;
     use multihash::Multihash;
@@ -517,6 +517,45 @@ mod tests {
         let mut server = new_server().await;
         let _client_connection = server.new_connection_handler(peer);
         server.process_incoming_message(peer, message);
+
+        let ev = poll_fn(|cx| server.poll(cx)).await;
+
+        let ToSwarm::NotifyHandler { peer_id, event, .. } = ev else {
+            panic!("Unexpected event {ev:?}");
+        };
+        assert_eq!(peer_id, peer);
+        let ToHandlerEvent::QueueOutgoingMessages(msgs) = event else {
+            panic!("Invalid handler message type ");
+        };
+        assert_eq!(msgs, vec![(cid.into(), data.as_bytes().to_vec())]);
+    }
+
+    #[tokio::test]
+    async fn client_requests_unknown_cid() {
+        let data = "unknown";
+        let cid = cid_of_data(data.as_bytes());
+        let message = ServerMessage {
+            wantlist: ProtoWantlist {
+                full: true,
+                entries: vec![Entry {
+                    cancel: false,
+                    priority: 0,
+                    sendDontHave: false,
+                    block: cid.into(),
+                    wantType: WantType::Block,
+                }],
+            },
+        };
+        let peer = PeerId::random();
+
+        let mut server = new_server().await;
+        let _client_connection = server.new_connection_handler(peer);
+        server.process_incoming_message(peer, message);
+
+        // no data yet
+        assert!(poll_fn_once(|cx| server.poll(cx)).await.is_none());
+
+        server.new_blocks_available(vec![(cid, data.into())]);
 
         let ev = poll_fn(|cx| server.poll(cx)).await;
 
