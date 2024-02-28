@@ -31,6 +31,8 @@ use crate::{Event, Result, StreamRequester, ToBehaviourEvent, ToHandlerEvent};
 type Sink = FramedWrite<libp2p_swarm::Stream, Codec>;
 type BlockWithCid<const S: usize> = (CidGeneric<S>, Vec<u8>);
 
+const MAX_WANTLIST_ENTRIES_PER_PEER: usize = 1024;
+
 #[derive(Debug)]
 pub(crate) struct ServerBehaviour<const S: usize, B>
 where
@@ -50,16 +52,10 @@ where
     outgoing_event_queue: VecDeque<ToSwarm<Event, ToHandlerEvent>>,
     /// list of long running tasks, currently used to interact with the store
     tasks: FuturesUnordered<BoxFuture<'static, TaskResult<S>>>,
-    /// abort handles to cancel above tasks
-    task_abort_handles: FnvHashMap<(PeerId, CidGeneric<S>), AbortHandle>,
 }
 
 enum TaskResult<const S: usize> {
-    Get(
-        PeerId,
-        Vec<GetCidResult<S>>, //CidGeneric<S>,
-                              //Result<Option<Vec<u8>>, BlockstoreError>,
-    ),
+    Get(PeerId, Vec<GetCidResult<S>>),
     Cancelled,
 }
 
@@ -78,7 +74,6 @@ impl<const S: usize> PeerWantlist<S> {
         &mut self,
         wantlist: ProtoWantlist,
     ) -> (Vec<CidGeneric<S>>, Vec<CidGeneric<S>>) {
-        // XXX quietly drop invalid entries from wantlist, do we care about logging?
         if wantlist.full {
             let wanted_cids = wantlist
                 .entries
@@ -94,25 +89,35 @@ impl<const S: usize> PeerWantlist<S> {
             return self.wantlist_replace(wanted_cids);
         }
 
-        // overallocates memory, but makes sure we don't re-allocate
-        let mut additions = Vec::with_capacity(wantlist.entries.len());
-        let mut removals = Vec::with_capacity(wantlist.entries.len());
+        let (cancels, additions): (Vec<_>, Vec<_>) = wantlist
+            .entries
+            .into_iter()
+            .filter_map(|e| {
+                CidGeneric::<S>::try_from(e.block)
+                    .map(|cid| (e.cancel, cid))
+                    .ok()
+            })
+            .partition(|(cancel, _cid)| *cancel);
 
-        for entry in wantlist.entries {
-            let Ok(cid) = CidGeneric::try_from(entry.block) else {
-                continue;
-            };
-
-            if !entry.cancel {
-                if self.0.insert(cid) {
-                    additions.push(cid);
-                }
-            } else if self.0.remove(&cid) {
-                removals.push(cid);
+        let mut removed = Vec::with_capacity(cancels.len());
+        // process cancels first, so that we truncate wantlist correctly
+        for (_, cid) in cancels {
+            if self.0.remove(&cid) {
+                removed.push(cid);
             }
         }
 
-        (additions, removals)
+        let mut added = Vec::with_capacity(additions.len());
+        for (_, cid) in additions {
+            if self.0.len() >= MAX_WANTLIST_ENTRIES_PER_PEER {
+                break;
+            }
+            if self.0.insert(cid) {
+                added.push(cid)
+            }
+        }
+
+        (added, removed)
     }
 
     fn wantlist_replace(
@@ -142,7 +147,6 @@ where
             peers_wantlists: Default::default(),
             peers_waiting_for_cid: Default::default(),
             tasks: Default::default(),
-            task_abort_handles: Default::default(),
             outgoing_queue: Default::default(),
             outgoing_event_queue: Default::default(),
         }
@@ -161,17 +165,9 @@ where
             }
             .boxed(),
         );
-
-        // TODO: re-implement cancelling
-        //self.task_abort_handles.insert((peer, cid), handle);
     }
 
     fn cancel_request(&mut self, peer: PeerId, cid: CidGeneric<S>) {
-        // remove pending blockstore read, if any
-        if let Some(abort_handle) = self.task_abort_handles.remove(&(peer, cid)) {
-            abort_handle.abort();
-        }
-
         // remove peer from the waitlist for cid, in case we happen to get it later
         if let Entry::Occupied(mut entry) = self.peers_waiting_for_cid.entry(cid) {
             if entry.get().as_ref() == [peer] {
@@ -297,20 +293,6 @@ where
             if let Poll::Ready(Some(task_result)) = self.tasks.poll_next_unpin(cx) {
                 match task_result {
                     TaskResult::Get(peer, results) => self.process_store_get_results(peer, results),
-                    /*
-                    TaskResult::Get(peer, cid, Ok(None)) => {
-                        // requested CID isn't present locally. If we happen to get it, we'll
-                        // forward it to the peer later
-                        debug!("Cid {cid} not in blockstore for {peer}");
-                    }
-                    TaskResult::Get(peer, cid, Ok(Some(data))) => {
-                        trace!("Cid {cid} for {peer} present in blockstore");
-                        self.outgoing_queue.push((cid, data));
-                    }
-                    TaskResult::Get(_peer, cid, Err(error)) => {
-                        warn!("Fetching {cid} from blockstore failed: {error}");
-                    }
-                    */
                     TaskResult::Cancelled => (),
                 }
                 continue;
@@ -389,7 +371,7 @@ impl<const S: usize> ServerConnectionHandler<S> {
                 (None, SinkState::None) => return Poll::Pending,
                 (None, SinkState::Ready(sink)) => {
                     if ready!(sink.poll_flush_unpin(cx)).is_err() {
-                        self.close_sink("poll_flush_unpin");
+                        self.close_sink_on_error("poll_flush_unpin");
                     }
 
                     // entire message was sent, no more data pending - closing
@@ -399,7 +381,7 @@ impl<const S: usize> ServerConnectionHandler<S> {
                 (Some(_), SinkState::None) => return self.open_new_substream(),
                 (pending_messages @ Some(_), SinkState::Ready(sink)) => {
                     if ready!(sink.poll_flush_unpin(cx)).is_err() {
-                        self.close_sink("poll_flush_unpin before sending message");
+                        self.close_sink_on_error("poll_flush_unpin before sending message");
                         continue;
                     }
 
@@ -412,7 +394,7 @@ impl<const S: usize> ServerConnectionHandler<S> {
                     };
 
                     if sink.start_send_unpin(&message).is_err() {
-                        self.close_sink("start_send_unpin");
+                        self.close_sink_on_error("start_send_unpin");
                         continue;
                     }
                 }
@@ -420,7 +402,7 @@ impl<const S: usize> ServerConnectionHandler<S> {
         }
     }
 
-    fn close_sink(&mut self, location: &str) {
+    fn close_sink_on_error(&mut self, location: &str) {
         warn!("sink operation failed, closing: {location}");
         self.sink = SinkState::None;
     }
