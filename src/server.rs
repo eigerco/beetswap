@@ -1,7 +1,6 @@
 use std::collections::hash_map::Entry;
 use std::collections::VecDeque;
 use std::fmt;
-use std::mem::take;
 use std::sync::Arc;
 use std::task::{ready, Context, Poll};
 
@@ -47,7 +46,7 @@ where
     /// list of peers that wait for particular CID
     peers_waiting_for_cid: FnvHashMap<CidGeneric<S>, SmallVec<[PeerId; 1]>>,
     /// list of blocks received from blockstore or network, that connected peers may be waiting for
-    outgoing_queue: Vec<BlockWithCid<S>>,
+    outgoing_queue: VecDeque<BlockWithCid<S>>,
     /// list of events to be sent back to swarm when poll is called
     outgoing_event_queue: VecDeque<ToSwarm<Event, ToHandlerEvent>>,
     /// list of long running tasks, currently used to interact with the store
@@ -99,8 +98,8 @@ impl<const S: usize> PeerWantlist<S> {
             })
             .partition(|(cancel, _cid)| *cancel);
 
-        let mut removed = Vec::with_capacity(cancels.len());
         // process cancels first, so that we truncate wantlist correctly
+        let mut removed = Vec::with_capacity(cancels.len());
         for (_, cid) in cancels {
             if self.0.remove(&cid) {
                 removed.push(cid);
@@ -230,34 +229,34 @@ where
             return false;
         }
 
-        let outgoing = take(&mut self.outgoing_queue);
+        let mut blocks_ready_for_peer = FnvHashMap::<PeerId, Vec<(Vec<u8>, Vec<u8>)>>::default();
 
-        let mut peer_to_block = FnvHashMap::<PeerId, Vec<(Vec<u8>, Vec<u8>)>>::default();
-
-        for (cid, data) in outgoing {
-            let Some(waitlist) = self.peers_waiting_for_cid.remove(&cid) else {
+        while let Some((cid, data)) = self.outgoing_queue.pop_front() {
+            let Some(peers_waiting) = self.peers_waiting_for_cid.remove(&cid) else {
                 continue;
             };
 
-            for peer in waitlist {
-                peer_to_block
+            for peer in peers_waiting {
+                blocks_ready_for_peer
                     .entry(peer)
                     .or_default()
                     .push((cid.to_bytes(), data.clone()))
             }
         }
 
-        if peer_to_block.is_empty() {
+        if blocks_ready_for_peer.is_empty() {
             return false;
         }
 
-        trace!("sending response to {} peer(s)", peer_to_block.len());
-
-        for (peer, data) in peer_to_block {
+        trace!(
+            "sending response to {} peer(s)",
+            blocks_ready_for_peer.len()
+        );
+        for (peer, blocks) in blocks_ready_for_peer {
             self.outgoing_event_queue.push_back(ToSwarm::NotifyHandler {
                 peer_id: peer,
                 handler: NotifyHandler::Any,
-                event: ToHandlerEvent::QueueOutgoingMessages(data),
+                event: ToHandlerEvent::QueueOutgoingMessages(blocks),
             })
         }
 
@@ -275,7 +274,7 @@ where
                 }
                 Ok(Some(data)) => {
                     trace!("Cid {cid} for {peer} present in blockstore");
-                    self.outgoing_queue.push((cid, data));
+                    self.outgoing_queue.push_back((cid, data));
                 }
                 Err(e) => {
                     warn!("Fetching {cid} from blockstore failed: {e}");
