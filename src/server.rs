@@ -8,7 +8,7 @@ use asynchronous_codec::FramedWrite;
 use blockstore::{Blockstore, BlockstoreError};
 use cid::CidGeneric;
 use fnv::{FnvHashMap, FnvHashSet};
-use futures::future::{AbortHandle, Abortable, BoxFuture};
+use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, SinkExt, StreamExt};
 use libp2p_core::upgrade::ReadyUpgrade;
@@ -55,7 +55,6 @@ where
 
 enum TaskResult<const S: usize> {
     Get(Arc<PeerId>, Vec<GetCidResult<S>>),
-    Cancelled,
 }
 
 struct GetCidResult<const S: usize> {
@@ -153,14 +152,11 @@ where
 
     fn schedule_store_get(&mut self, peer: Arc<PeerId>, cids: Vec<CidGeneric<S>>) {
         let store = self.store.clone();
-        let (_handle, reg) = AbortHandle::new_pair();
 
         self.tasks.push(
             async move {
-                match Abortable::new(get_multiple_cids_from_store(store, cids), reg).await {
-                    Ok(result) => TaskResult::Get(peer, result),
-                    Err(_) => TaskResult::Cancelled,
-                }
+                let result = get_multiple_cids_from_store(store, cids).await;
+                TaskResult::Get(peer, result)
             }
             .boxed(),
         );
@@ -294,7 +290,6 @@ where
             if let Poll::Ready(Some(task_result)) = self.tasks.poll_next_unpin(cx) {
                 match task_result {
                     TaskResult::Get(peer, results) => self.process_store_get_results(peer, results),
-                    TaskResult::Cancelled => (),
                 }
                 continue;
             }
