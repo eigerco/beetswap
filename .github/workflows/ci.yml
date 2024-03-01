@@ -60,11 +60,6 @@ jobs:
         rm Cargo.lock
         cargo +nightly update -Zminimal-versions
 
-        # multistream-select 0.13 depends on log 0.4, however it can only
-        # compile with log 0.4.4 and above. When multistream-select 0.14
-        # is released, this will not be needed.
-        cargo +nightly update -p log --precise 0.4.4
-
     - name: Install stable toolchain
       uses: dtolnay/rust-toolchain@stable
 
@@ -99,7 +94,7 @@ jobs:
     - name: Install cargo-udeps
       uses: taiki-e/cache-cargo-install-action@v1
       with:
-        tool: cargo-udeps@0.1.43
+        tool: cargo-udeps@0.1.45
 
     - name: Check for unused dependencies
       run: cargo +nightly udeps --all-targets

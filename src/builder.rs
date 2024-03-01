@@ -4,6 +4,7 @@ use blockstore::Blockstore;
 
 use crate::client::{ClientBehaviour, ClientConfig};
 use crate::multihasher::{Multihasher, MultihasherTable};
+use crate::server::ServerBehaviour;
 use crate::utils::stream_protocol;
 use crate::{Behaviour, Error, Result};
 
@@ -117,7 +118,8 @@ where
         Behaviour {
             protocol: stream_protocol(protocol_prefix, "/ipfs/bitswap/1.2.0")
                 .expect("prefix checked by beetswap::BehaviourBuilder::protocol_prefix"),
-            client: ClientBehaviour::new(self.client, blockstore, protocol_prefix),
+            client: ClientBehaviour::new(self.client, blockstore.clone(), protocol_prefix),
+            server: ServerBehaviour::new(blockstore, protocol_prefix),
             multihasher,
         }
     }

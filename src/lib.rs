@@ -13,6 +13,7 @@ use libp2p_swarm::{
     ConnectionHandlerEvent, ConnectionId, FromSwarm, NetworkBehaviour, StreamProtocol,
     SubstreamProtocol, THandlerInEvent, THandlerOutEvent, ToSwarm,
 };
+use tracing::trace;
 
 mod builder;
 mod cid_prefix;
@@ -21,6 +22,7 @@ mod incoming_stream;
 mod message;
 pub mod multihasher;
 mod proto;
+mod server;
 #[cfg(test)]
 mod test_utils;
 pub mod utils;
@@ -30,6 +32,7 @@ use crate::client::{ClientBehaviour, ClientConnectionHandler};
 use crate::incoming_stream::IncomingStream;
 use crate::multihasher::MultihasherTable;
 use crate::proto::message::mod_Message::Wantlist as ProtoWantlist;
+use crate::server::{ServerBehaviour, ServerConnectionHandler};
 
 pub use crate::builder::BehaviourBuilder;
 pub use crate::client::QueryId;
@@ -42,6 +45,7 @@ where
 {
     protocol: StreamProtocol,
     client: ClientBehaviour<MAX_MULTIHASH_SIZE, B>,
+    server: ServerBehaviour<MAX_MULTIHASH_SIZE, B>,
     multihasher: Arc<MultihasherTable<MAX_MULTIHASH_SIZE>>,
 }
 
@@ -115,6 +119,7 @@ where
             peer,
             protocol: self.protocol.clone(),
             client_handler: self.client.new_connection_handler(peer),
+            server_handler: self.server.new_connection_handler(peer),
             incoming_streams: SelectAll::new(),
             multihasher: self.multihasher.clone(),
         })
@@ -131,6 +136,7 @@ where
             peer,
             protocol: self.protocol.clone(),
             client_handler: self.client.new_connection_handler(peer),
+            server_handler: self.server.new_connection_handler(peer),
             incoming_streams: SelectAll::new(),
             multihasher: self.multihasher.clone(),
         })
@@ -158,7 +164,13 @@ where
                     self.client.process_incoming_message(peer, client_msg);
                 }
 
-                // TODO: handle server message
+                if let Some(server_msg) = msg.server.take() {
+                    self.server.process_incoming_message(peer, server_msg);
+                }
+            }
+            ToBehaviourEvent::NewBlocksAvailable(blocks) => {
+                trace!("received new blocks: {}", blocks.len());
+                self.server.new_blocks_available(blocks);
             }
         }
     }
@@ -167,7 +179,22 @@ where
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<ToSwarm<Self::ToSwarm, THandlerInEvent<Self>>> {
-        self.client.poll(cx)
+        if let ready @ Poll::Ready(_) = self.client.poll(cx) {
+            return ready;
+        }
+
+        let new_blocks = self.client.get_new_blocks();
+        if !new_blocks.is_empty() {
+            self.server.new_blocks_available(new_blocks);
+        }
+
+        // call server last so that it can process new blocks from client and blockstore
+        // together
+        if let ready @ Poll::Ready(_) = self.server.poll(cx) {
+            return ready;
+        }
+
+        Poll::Pending
     }
 }
 
@@ -175,12 +202,19 @@ where
 #[doc(hidden)]
 pub enum ToBehaviourEvent<const S: usize> {
     IncomingMessage(PeerId, IncomingMessage<S>),
+    NewBlocksAvailable(Vec<(CidGeneric<S>, Vec<u8>)>),
 }
 
 #[derive(Debug)]
 #[doc(hidden)]
 pub enum ToHandlerEvent {
     SendWantlist(ProtoWantlist, Arc<Mutex<SendingState>>),
+    QueueOutgoingMessages(Vec<(Vec<u8>, Vec<u8>)>),
+}
+
+pub enum StreamRequester {
+    Client,
+    Server,
 }
 
 #[derive(Debug)]
@@ -189,6 +223,7 @@ pub struct ConnHandler<const MAX_MULTIHASH_SIZE: usize> {
     peer: PeerId,
     protocol: StreamProtocol,
     client_handler: ClientConnectionHandler<MAX_MULTIHASH_SIZE>,
+    server_handler: ServerConnectionHandler<MAX_MULTIHASH_SIZE>,
     incoming_streams: SelectAll<IncomingStream<MAX_MULTIHASH_SIZE>>,
     multihasher: Arc<MultihasherTable<MAX_MULTIHASH_SIZE>>,
 }
@@ -199,7 +234,7 @@ impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler for ConnHandler<MAX_MULT
     type InboundProtocol = ReadyUpgrade<StreamProtocol>;
     type InboundOpenInfo = ();
     type OutboundProtocol = ReadyUpgrade<StreamProtocol>;
-    type OutboundOpenInfo = ();
+    type OutboundOpenInfo = StreamRequester;
 
     fn listen_protocol(&self) -> SubstreamProtocol<Self::InboundProtocol, Self::InboundOpenInfo> {
         SubstreamProtocol::new(ReadyUpgrade::new(self.protocol.clone()), ())
@@ -209,6 +244,9 @@ impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler for ConnHandler<MAX_MULT
         match event {
             ToHandlerEvent::SendWantlist(wantlist, state) => {
                 self.client_handler.send_wantlist(wantlist, state);
+            }
+            ToHandlerEvent::QueueOutgoingMessages(data) => {
+                self.server_handler.queue_messages(data);
             }
         }
     }
@@ -224,16 +262,15 @@ impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler for ConnHandler<MAX_MULT
         >,
     ) {
         match event {
-            ConnectionEvent::FullyNegotiatedOutbound(ev) => {
-                if self.client_handler.stream_requested() {
-                    self.client_handler.set_stream(ev.protocol);
-                }
-            }
+            ConnectionEvent::FullyNegotiatedOutbound(outbound) => match outbound.info {
+                StreamRequester::Client => self.client_handler.set_stream(outbound.protocol),
+                StreamRequester::Server => self.server_handler.set_stream(outbound.protocol),
+            },
             ConnectionEvent::FullyNegotiatedInbound(ev) => {
                 let stream = IncomingStream::new(ev.protocol, self.multihasher.clone());
                 self.incoming_streams.push(stream);
             }
-            _ => {}
+            _ => (),
         }
     }
 
@@ -259,6 +296,10 @@ impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler for ConnHandler<MAX_MULT
         }
 
         if let Poll::Ready(ev) = self.client_handler.poll(cx) {
+            return Poll::Ready(ev);
+        }
+
+        if let Poll::Ready(ev) = self.server_handler.poll(cx) {
             return Poll::Ready(ev);
         }
 

@@ -26,10 +26,17 @@ unsigned-varint = "0.8"
 void = "1"
 
 [dev-dependencies]
+anyhow = "1.0"
+clap = { version = "4.4", features = ["derive"] }
 hex = "0.4"
-libp2p-identity = { version = "0.2", features = ["rand"] }
+libp2p = { version = "0.53", features = ["tokio", "tcp", "identify", "macros"] }
+libp2p-noise = "0.44"
+libp2p-yamux = "0.45"
+multihash = "0.19"
 multihash-codetable = { version = "0.1", features = ["digest", "sha2"] }
-tokio = { version = "1", features = ["rt", "macros", "time"] }
+tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
+tracing-appender = "0.2.2"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 
 [features]
 wasm-bindgen = ["futures-timer/wasm-bindgen"]
