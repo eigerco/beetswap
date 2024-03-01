@@ -336,7 +336,7 @@ impl<const S: usize> ServerConnectionHandler<S> {
             .collect::<Vec<_>>();
 
         self.pending_outgoing_messages
-            .get_or_insert(Vec::with_capacity(block_list.len()))
+            .get_or_insert_with(|| Vec::with_capacity(block_list.len()))
             .extend(block_list);
     }
 
