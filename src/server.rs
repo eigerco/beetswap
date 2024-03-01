@@ -370,8 +370,6 @@ impl<const S: usize> ServerConnectionHandler<S> {
                         self.close_sink_on_error("poll_flush_unpin");
                     }
 
-                    // entire message was sent, no more data pending - closing
-                    self.sink = SinkState::None;
                     return Poll::Pending;
                 }
                 (Some(_), SinkState::None) => return self.open_new_substream(),
