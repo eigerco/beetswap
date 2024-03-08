@@ -26,7 +26,7 @@ use crate::incoming_stream::ClientMessage;
 use crate::message::Codec;
 use crate::proto::message::mod_Message::{BlockPresenceType, Wantlist as ProtoWantlist};
 use crate::proto::message::Message;
-use crate::utils::{convert_cid, stream_protocol};
+use crate::utils::{convert_cid, poll_again, stream_protocol};
 use crate::wantlist::{Wantlist, WantlistState};
 use crate::StreamRequester;
 use crate::{Error, Event, Result, ToBehaviourEvent, ToHandlerEvent};
@@ -349,8 +349,7 @@ where
 
             // Reset timer and poll again to get it registered
             self.send_full_timer.reset(SEND_FULL_INTERVAL);
-            cx.waker().wake_by_ref();
-            return Poll::Pending;
+            poll_again!(cx);
         }
 
         if let Poll::Ready(Some(task_result)) = self.tasks.poll_next_unpin(cx) {
@@ -391,13 +390,12 @@ where
             }
 
             // If we didn't return an event, we need to retry the whole poll
-            cx.waker().wake_by_ref();
-            return Poll::Pending;
+            poll_again!(cx);
         }
 
         if self.update_handlers() {
             // New events generated, poll again to send them.
-            cx.waker().wake_by_ref();
+            poll_again!(cx);
         }
 
         Poll::Pending

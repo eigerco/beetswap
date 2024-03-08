@@ -27,6 +27,14 @@ pub(crate) fn stream_protocol(
     }
 }
 
+macro_rules! poll_again {
+    ($ctx:expr) => {{
+        $ctx.waker().wake_by_ref();
+        return ::std::task::Poll::Pending;
+    }};
+}
+pub(crate) use poll_again;
+
 #[cfg(test)]
 mod tests {
     use super::*;
