@@ -338,69 +338,69 @@ where
         // Update waker
         self.waker.register(cx.waker());
 
-        loop {
-            if let Some(ev) = self.queue.pop_front() {
-                return Poll::Ready(ev);
+        if let Some(ev) = self.queue.pop_front() {
+            return Poll::Ready(ev);
+        }
+
+        if self.send_full_timer.poll_unpin(cx).is_ready() {
+            for state in self.peers.values_mut() {
+                state.send_full = true;
             }
 
-            if self.send_full_timer.poll_unpin(cx).is_ready() {
-                for state in self.peers.values_mut() {
-                    state.send_full = true;
-                }
-
-                // Reset timer and loop again to get it registered
-                self.send_full_timer.reset(SEND_FULL_INTERVAL);
-                continue;
-            }
-
-            if let Poll::Ready(Some(task_result)) = self.tasks.poll_next_unpin(cx) {
-                match task_result {
-                    // Blockstore already has the data so return them to the user
-                    TaskResult::Get(query_id, _, Ok(Some(data))) => {
-                        return Poll::Ready(ToSwarm::GenerateEvent(Event::GetQueryResponse {
-                            query_id,
-                            data: data.clone(),
-                        }));
-                    }
-
-                    // If blockstore doesn't have the data, add CID in the wantlist.
-                    //
-                    // Connection handlers will be informed via `update_handlers` about the new items in wantlist.
-                    TaskResult::Get(query_id, cid, Ok(None)) => {
-                        self.wantlist.insert(cid);
-                        self.cid_to_queries.entry(cid).or_default().push(query_id);
-                    }
-
-                    // Blockstore error
-                    TaskResult::Get(query_id, _, Err(e)) => {
-                        return Poll::Ready(ToSwarm::GenerateEvent(Event::GetQueryError {
-                            query_id,
-                            error: e.into(),
-                        }));
-                    }
-
-                    TaskResult::Set(Ok(blocks)) => {
-                        self.new_blocks.extend(blocks);
-                    }
-
-                    // TODO: log it
-                    TaskResult::Set(Err(_e)) => {}
-
-                    // Nothing to do
-                    TaskResult::Cancelled => {}
-                }
-
-                // If we didn't return an event, we need to retry the whole loop
-                continue;
-            }
-
-            if self.update_handlers() {
-                // New events generated, loop again to send them.
-                continue;
-            }
-
+            // Reset timer and poll again to get it registered
+            self.send_full_timer.reset(SEND_FULL_INTERVAL);
+            cx.waker().wake_by_ref();
             return Poll::Pending;
         }
+
+        if let Poll::Ready(Some(task_result)) = self.tasks.poll_next_unpin(cx) {
+            match task_result {
+                // Blockstore already has the data so return them to the user
+                TaskResult::Get(query_id, _, Ok(Some(data))) => {
+                    return Poll::Ready(ToSwarm::GenerateEvent(Event::GetQueryResponse {
+                        query_id,
+                        data: data.clone(),
+                    }));
+                }
+
+                // If blockstore doesn't have the data, add CID in the wantlist.
+                //
+                // Connection handlers will be informed via `update_handlers` about the new items in wantlist.
+                TaskResult::Get(query_id, cid, Ok(None)) => {
+                    self.wantlist.insert(cid);
+                    self.cid_to_queries.entry(cid).or_default().push(query_id);
+                }
+
+                // Blockstore error
+                TaskResult::Get(query_id, _, Err(e)) => {
+                    return Poll::Ready(ToSwarm::GenerateEvent(Event::GetQueryError {
+                        query_id,
+                        error: e.into(),
+                    }));
+                }
+
+                TaskResult::Set(Ok(blocks)) => {
+                    self.new_blocks.extend(blocks);
+                }
+
+                // TODO: log it
+                TaskResult::Set(Err(_e)) => {}
+
+                // Nothing to do
+                TaskResult::Cancelled => {}
+            }
+
+            // If we didn't return an event, we need to retry the whole poll
+            cx.waker().wake_by_ref();
+            return Poll::Pending;
+        }
+
+        if self.update_handlers() {
+            // New events generated, poll again to send them.
+            cx.waker().wake_by_ref();
+        }
+
+        Poll::Pending
     }
 
     pub(crate) fn get_new_blocks(&mut self) -> Vec<(CidGeneric<S>, Vec<u8>)> {
