@@ -13,9 +13,6 @@ pub(crate) const MAX_MESSAGE_SIZE: usize = 4 * 1024 * 1024;
 
 pub(crate) struct Codec;
 
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum CodecError {}
-
 impl Encoder for Codec {
     type Item<'a> = &'a Message;
     type Error = io::Error;

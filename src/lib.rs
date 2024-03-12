@@ -1,3 +1,6 @@
+#![cfg_attr(docs_rs, feature(doc_cfg))]
+#![doc = include_str!("../README.md")]
+
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
@@ -52,19 +55,35 @@ where
 /// Event produced by [`Behaviour`].
 #[derive(Debug)]
 pub enum Event {
-    GetQueryResponse { query_id: QueryId, data: Vec<u8> },
-    GetQueryError { query_id: QueryId, error: Error },
+    /// Requested block has been successfuly retrieved
+    GetQueryResponse {
+        /// Id of the query, returned by [`Behaviour::get`]
+        query_id: QueryId,
+        /// Data of the requested block
+        data: Vec<u8>,
+    },
+    /// Error occurred while fetching block
+    GetQueryError {
+        /// Id of the query, returned by [`Behaviour::get`]
+        query_id: QueryId,
+        /// Error that occurred when getting the data
+        error: Error,
+    },
 }
 
 /// Representation of all the errors that can occur when interacting with this crate.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Encountered CID with multihash longer than max set when creating the [`Behaviour`]
     #[error("Invalid multihash size")]
     InvalidMultihashSize,
 
+    /// Invalid protocol prefix provided when building `Behaviour`, see
+    /// [`BehaviourBuilder::protocol_prefix`]
     #[error("Invalid protocol prefix: {0}")]
     InvalidProtocolPrefix(String),
 
+    /// Error received when interacting with blockstore
     #[error("Blockstore error: {0}")]
     Blockstore(#[from] BlockstoreError),
 }
@@ -212,6 +231,7 @@ pub enum ToHandlerEvent {
     QueueOutgoingMessages(Vec<(Vec<u8>, Vec<u8>)>),
 }
 
+#[doc(hidden)]
 pub enum StreamRequester {
     Client,
     Server,

@@ -1,3 +1,5 @@
+//! Helpers used in and provided by the crate
+
 use cid::CidGeneric;
 use libp2p_core::multihash::Multihash;
 use libp2p_swarm::StreamProtocol;

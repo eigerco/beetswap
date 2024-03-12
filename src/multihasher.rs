@@ -1,3 +1,13 @@
+//! Module responsible for calculating hashes for data received
+//!
+//! For interoperability `StandardMultihasher` is registered by default, which uses hashes
+//! provided by [`multihash_codetable::Code`]. If you need to register your own multihashes,
+//! you can implement [`Multihasher`] trait and then register the struct with
+//! [`BehaviourBuilder::register_multihasher`] when creating the behaviour.
+//!
+//! [`BehaviourBuilder::register_multihasher`]:
+//! crate::builder::BehaviourBuilder::register_multihasher
+
 use std::collections::VecDeque;
 use std::fmt::{self, Display};
 
@@ -40,10 +50,13 @@ pub enum MultihasherError {
 }
 
 impl MultihasherError {
+    /// Custom error, causes block to be ignored
     pub fn custom(e: impl Display) -> MultihasherError {
         MultihasherError::Custom(e.to_string())
     }
 
+    /// Custom fatal error, causes block to be ignored and stream from which it was received to
+    /// close
     pub fn custom_fatal(e: impl Display) -> MultihasherError {
         MultihasherError::CustomFatal(e.to_string())
     }
