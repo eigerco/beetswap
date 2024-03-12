@@ -1,3 +1,26 @@
+//! Example bitswap node implementation allowing with basic interaction over cli
+//!
+//! It shows off example way to setup beetswap behaviour with a libp2p swarm and then either
+//! connecting to another node and/or listening for incoming connections. In both cases both
+//! the server and the client parts of the bitswap are running.
+//!
+//! Example invocations:
+//!
+//! Listen on port `9898` and serve single block with contents "12345"
+//! ```sh
+//! cargo run --example=node -- -l 9898 --preload-blockstore-string 12345
+//! ```
+//!
+//! Connect to `10.0.0.101` on port `9898` and ask for CID `bafkreic...` (it's a CID of "12345" string above). You can specify multiple CIDs at once.
+//! ```sh
+//! cargo run --example=node  -- -p /ip4/10.0.0.101/tcp/9898 bafkreiczsrdrvoybcevpzqmblh3my5fu6ui3tgag3jm3hsxvvhaxhswpyu
+//! ```
+//!
+//! Listen on port `9898` and requests provided CID from them until it gets correct response with
+//! data
+//! ```sh
+//! cargo run --example=node  -- -l 9898 bafkreiczsrdrvoybcevpzqmblh3my5fu6ui3tgag3jm3hsxvvhaxhswpyu
+//! ```
 use std::collections::HashMap;
 use std::time::Duration;
 
