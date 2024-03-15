@@ -1,26 +1,27 @@
 use std::collections::{hash_map, VecDeque};
-use std::fmt;
 use std::mem::take;
 use std::sync::Arc;
 use std::task::{ready, Context, Poll};
 use std::time::Duration;
+use std::{fmt, mem};
 
 use asynchronous_codec::FramedWrite;
 use blockstore::{Blockstore, BlockstoreError};
 use cid::CidGeneric;
-use fnv::FnvHashMap;
+use fnv::{FnvHashMap, FnvHashSet};
 use futures::future::{AbortHandle, Abortable, BoxFuture};
 use futures::stream::FuturesUnordered;
 use futures::task::AtomicWaker;
 use futures::{FutureExt, SinkExt, StreamExt};
 use futures_timer::Delay;
+use instant::Instant;
 use libp2p_core::upgrade::ReadyUpgrade;
 use libp2p_identity::PeerId;
 use libp2p_swarm::{
-    ConnectionHandlerEvent, NotifyHandler, StreamProtocol, SubstreamProtocol, ToSwarm,
+    ConnectionHandlerEvent, ConnectionId, NotifyHandler, StreamProtocol, SubstreamProtocol, ToSwarm,
 };
 use smallvec::SmallVec;
-use std::sync::Mutex;
+use tracing::warn;
 
 use crate::incoming_stream::ClientMessage;
 use crate::message::Codec;
@@ -28,10 +29,12 @@ use crate::proto::message::mod_Message::{BlockPresenceType, Wantlist as ProtoWan
 use crate::proto::message::Message;
 use crate::utils::{convert_cid, stream_protocol};
 use crate::wantlist::{Wantlist, WantlistState};
-use crate::StreamRequester;
+use crate::{ConnHandlerEvent, StreamRequester};
 use crate::{Error, Event, Result, ToBehaviourEvent, ToHandlerEvent};
 
 const SEND_FULL_INTERVAL: Duration = Duration::from_secs(30);
+const RECEIVE_REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
+const START_SENDING_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// ID of an ongoing query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -81,8 +84,8 @@ where
 
 #[derive(Debug)]
 struct PeerState<const S: usize> {
-    established_connections_num: usize,
-    sending: Arc<Mutex<SendingState>>,
+    established_connections: FnvHashSet<ConnectionId>,
+    sending_state: SendingState,
     wantlist: WantlistState<S>,
     send_full: bool,
 }
@@ -91,8 +94,10 @@ struct PeerState<const S: usize> {
 #[doc(hidden)]
 pub enum SendingState {
     Ready,
-    Sending,
-    Poisoned,
+    Requested(Instant, ConnectionId),
+    RequestReceived(Instant, ConnectionId),
+    Sending(Instant, ConnectionId),
+    Failed(ConnectionId),
 }
 
 impl<const S: usize, B> ClientBehaviour<S, B>
@@ -120,31 +125,40 @@ where
         }
     }
 
-    pub(crate) fn new_connection_handler(&mut self, peer: PeerId) -> ClientConnectionHandler<S> {
-        let peer = self.peers.entry(peer).or_insert_with(|| PeerState {
-            established_connections_num: 0,
-            sending: Arc::new(Mutex::new(SendingState::Ready)),
+    pub(crate) fn new_connection_handler(
+        &mut self,
+        peer_id: PeerId,
+        connection_id: ConnectionId,
+    ) -> ClientConnectionHandler<S> {
+        let peer = self.peers.entry(peer_id).or_insert_with(|| PeerState {
+            established_connections: FnvHashSet::default(),
+            sending_state: SendingState::Ready,
             wantlist: WantlistState::new(),
             send_full: true,
         });
 
-        peer.established_connections_num += 1;
+        peer.established_connections.insert(connection_id);
 
         ClientConnectionHandler {
+            peer_id,
+            connection_id,
+            queue: VecDeque::new(),
             protocol: self.protocol.clone(),
-            stream_requested: false,
-            sink: None,
-            wantlist: None,
-            sending_state: None,
-            behaviour_waker: Arc::new(AtomicWaker::new()),
+            msg: None,
+            sink_state: SinkState::None,
+            sending_state: SendingState::Ready,
+            closing: false,
         }
     }
 
-    pub(crate) fn on_connection_closed(&mut self, peer: PeerId) {
+    pub(crate) fn on_connection_closed(&mut self, peer: PeerId, connection_id: ConnectionId) {
         if let hash_map::Entry::Occupied(mut entry) = self.peers.entry(peer) {
-            entry.get_mut().established_connections_num -= 1;
+            entry
+                .get_mut()
+                .established_connections
+                .remove(&connection_id);
 
-            if entry.get_mut().established_connections_num == 0 {
+            if entry.get().established_connections.is_empty() {
                 entry.remove();
             }
         }
@@ -280,39 +294,67 @@ where
         }
     }
 
+    pub(crate) fn sending_state_changed(&mut self, peer_id: PeerId, state: SendingState) {
+        if let Some(peer) = self.peers.get_mut(&peer_id) {
+            peer.sending_state = state;
+        }
+    }
+
     fn update_handlers(&mut self) -> bool {
         let mut handler_updated = false;
+        let mut to_be_removed = SmallVec::<[PeerId; 8]>::new();
 
         for (peer, state) in self.peers.iter_mut() {
-            let mut sending_state = state.sending.lock().unwrap();
-
-            // Decide if full list is needed or not.
-            let send_full = match &*sending_state {
-                SendingState::Sending => {
-                    if Arc::strong_count(&state.sending) == 1 {
-                        // `Sending` state with strong count of 1 can happen only
-                        // when the connection is dropped just before it reads our
-                        // event. In this case we treat is with the same way as `Poisoned`
-                        // state.
-                        true
-                    } else {
-                        // ClientConnectionHandler will wake us when we can retry
+            // Clear out bad connections. In case of a bad connection we
+            // must send the full wantlist because we don't know what
+            // the remote peer has received.
+            match state.sending_state {
+                SendingState::Ready => {
+                    // Allowed to send
+                }
+                SendingState::Requested(instant, connection_id) => {
+                    if instant.elapsed() < RECEIVE_REQUEST_TIMEOUT {
+                        // Sending in progress
                         continue;
                     }
+                    // Bad connection
+                    state.established_connections.remove(&connection_id);
+                    state.send_full = true;
                 }
-                SendingState::Ready => state.send_full,
-                // State is poisoned, send full list to recover.
-                SendingState::Poisoned => true,
+                SendingState::RequestReceived(instant, connection_id) => {
+                    if instant.elapsed() < START_SENDING_TIMEOUT {
+                        // Sending in progress
+                        continue;
+                    }
+                    // Bad connection
+                    state.established_connections.remove(&connection_id);
+                    state.send_full = true;
+                    // TODO: Stop ongoing request
+                }
+                SendingState::Sending(..) => {
+                    // Sending in progress
+                    continue;
+                }
+                SendingState::Failed(connection_id) => {
+                    // Bad connection
+                    state.established_connections.remove(&connection_id);
+                    state.send_full = true;
+                }
             };
 
-            let wantlist = if send_full {
+            let Some(connection_id) = state.established_connections.iter().next().copied() else {
+                to_be_removed.push(*peer);
+                continue;
+            };
+
+            let wantlist = if state.send_full {
                 state.wantlist.generate_proto_full(&self.wantlist)
             } else {
                 state.wantlist.generate_proto_update(&self.wantlist)
             };
 
             // Allow empty entries to be sent when send_full flag is set.
-            if send_full {
+            if state.send_full {
                 // Reset flag
                 state.send_full = false;
             } else if wantlist.entries.is_empty() {
@@ -322,12 +364,16 @@ where
 
             self.queue.push_back(ToSwarm::NotifyHandler {
                 peer_id: peer.to_owned(),
-                handler: NotifyHandler::Any,
-                event: ToHandlerEvent::SendWantlist(wantlist, state.sending.clone()),
+                handler: NotifyHandler::One(connection_id),
+                event: ToHandlerEvent::SendWantlist(wantlist),
             });
 
-            *sending_state = SendingState::Sending;
+            state.sending_state = SendingState::Requested(Instant::now(), connection_id);
             handler_updated = true;
+        }
+
+        for peer in to_be_removed {
+            self.peers.remove(&peer);
         }
 
         // This is true if at least one handler is updated
@@ -409,55 +455,63 @@ where
 }
 
 pub(crate) struct ClientConnectionHandler<const S: usize> {
+    peer_id: PeerId,
+    connection_id: ConnectionId,
+    queue: VecDeque<ToBehaviourEvent<S>>,
     protocol: StreamProtocol,
-    stream_requested: bool,
-    sink: Option<FramedWrite<libp2p_swarm::Stream, Codec>>,
-    /// Wantlist to be send
-    wantlist: Option<ProtoWantlist>,
-    /// Sending state of peer.
-    ///
-    /// Even if we have multiple concurrent connections with the peer, only
-    /// one of them will be sending and have this value filled.
-    sending_state: Option<Arc<Mutex<SendingState>>>,
-    behaviour_waker: Arc<AtomicWaker>,
+    msg: Option<Message>,
+    sink_state: SinkState,
+    sending_state: SendingState,
+    closing: bool,
+}
+
+enum SinkState {
+    None,
+    Requested,
+    Ready(FramedWrite<libp2p_swarm::Stream, Codec>),
 }
 
 impl<const S: usize> ClientConnectionHandler<S> {
     pub(crate) fn set_stream(&mut self, stream: libp2p_swarm::Stream) {
         // Convert `AsyncWrite` stream to `Sink`
-        self.sink = Some(FramedWrite::new(stream, Codec));
-        self.stream_requested = false;
+        self.sink_state = SinkState::Ready(FramedWrite::new(stream, Codec));
     }
 
-    pub(crate) fn send_wantlist(
-        &mut self,
-        wantlist: ProtoWantlist,
-        state: Arc<Mutex<SendingState>>,
-    ) {
-        debug_assert!(self.wantlist.is_none());
-        debug_assert!(self.sending_state.is_none());
-
-        self.wantlist = Some(wantlist);
-        self.sending_state = Some(state);
+    pub(crate) fn stream_allocation_failed(&mut self) {
+        debug_assert!(matches!(self.sink_state, SinkState::Requested));
+        // Reset state to force a new allocation in `poll`
+        self.sink_state = SinkState::None;
     }
 
-    fn poll_outgoing_no_stream(
+    pub(crate) fn send_wantlist(&mut self, wantlist: ProtoWantlist) {
+        debug_assert!(self.msg.is_none());
+        debug_assert!(matches!(self.sending_state, SendingState::Ready));
+
+        self.msg = Some(Message {
+            wantlist: Some(wantlist),
+            ..Message::default()
+        });
+
+        self.change_sending_state(SendingState::RequestReceived(
+            Instant::now(),
+            self.connection_id,
+        ));
+    }
+
+    fn change_sending_state(&mut self, state: SendingState) {
+        if self.sending_state != state {
+            self.sending_state = state;
+            self.queue
+                .push_back(ToBehaviourEvent::SendingStateChanged(self.peer_id, state));
+        }
+    }
+
+    fn open_new_substream(
         &mut self,
     ) -> Poll<
         ConnectionHandlerEvent<ReadyUpgrade<StreamProtocol>, StreamRequester, ToBehaviourEvent<S>>,
     > {
-        // `stream_requested` already checked in `poll_outgoing`
-        debug_assert!(!self.stream_requested);
-        // `wantlist` and `sending_state` must be both `Some` or both `None`
-        debug_assert_eq!(self.wantlist.is_some(), self.sending_state.is_some());
-
-        if self.wantlist.is_none() {
-            // Nothing to send
-            return Poll::Pending;
-        }
-
-        // There is data to send, so request a new stream.
-        self.stream_requested = true;
+        self.sink_state = SinkState::Requested;
 
         Poll::Ready(ConnectionHandlerEvent::OutboundSubstreamRequest {
             protocol: SubstreamProtocol::new(
@@ -467,94 +521,90 @@ impl<const S: usize> ClientConnectionHandler<S> {
         })
     }
 
-    fn on_sink_error(&mut self) {
-        self.sink.take();
+    pub(crate) fn poll_close(&mut self, cx: &mut Context) -> Poll<Option<ToBehaviourEvent<S>>> {
+        if !self.closing {
+            self.closing = true;
+            self.msg.take();
 
-        if self.wantlist.is_none() {
-            if let Some(state) = self.sending_state.take() {
-                *state.lock().unwrap() = SendingState::Poisoned;
-                self.behaviour_waker.wake();
+            if let SinkState::Ready(mut sink) = mem::replace(&mut self.sink_state, SinkState::None)
+            {
+                let _ = sink.poll_close_unpin(cx);
             }
+
+            // If sending is in progress, then we don't know how much data the other end received
+            // so we consider this as "failed".
+            if matches!(
+                self.sending_state,
+                SendingState::RequestReceived(..) | SendingState::Sending(..)
+            ) {
+                self.change_sending_state(SendingState::Failed(self.connection_id));
+            }
+
+            self.queue
+                .push_back(ToBehaviourEvent::ClientClosingConnection(
+                    self.peer_id,
+                    self.connection_id,
+                ));
         }
+
+        Poll::Ready(self.queue.pop_front())
     }
 
-    fn poll_outgoing(
-        &mut self,
-        cx: &mut Context,
-    ) -> Poll<
-        ConnectionHandlerEvent<ReadyUpgrade<StreamProtocol>, StreamRequester, ToBehaviourEvent<S>>,
-    > {
+    fn close_sink_on_error(&mut self, location: &str) {
+        warn!("sink operation failed, closing: {location}");
+        self.sink_state = SinkState::None;
+    }
+
+    pub(crate) fn poll(&mut self, cx: &mut Context) -> Poll<ConnHandlerEvent<S>> {
         loop {
-            if self.stream_requested {
-                // We can not progress until we have a stream
-                return Poll::Pending;
+            if let Some(ev) = self.queue.pop_front() {
+                return Poll::Ready(ConnectionHandlerEvent::NotifyBehaviour(ev));
             }
 
-            let Some(sink) = self.sink.as_mut() else {
-                return self.poll_outgoing_no_stream();
-            };
+            match (&mut self.msg, &mut self.sink_state) {
+                (None, SinkState::None) => return Poll::Pending,
+                (Some(_), SinkState::None) => return self.open_new_substream(),
+                (_, SinkState::Requested) => return Poll::Pending,
+                (None, SinkState::Ready(sink)) => {
+                    if ready!(sink.poll_flush_unpin(cx)).is_err() {
+                        self.close_sink_on_error("poll_flush_unpin");
+                        self.change_sending_state(SendingState::Failed(self.connection_id));
+                        continue;
+                    }
 
-            // Send the ongoing message before we continue to a new one
-            if ready!(sink.poll_flush_unpin(cx)).is_err() {
-                // Sink closed unexpectedly, retry
-                self.on_sink_error();
-                continue;
-            }
-
-            let Some(wantlist) = self.wantlist.take() else {
-                // Nothing to send
-                if let Some(state) = self.sending_state.take() {
-                    *state.lock().unwrap() = SendingState::Ready;
-                    self.behaviour_waker.wake();
+                    let _ = sink.poll_close_unpin(cx);
+                    self.sink_state = SinkState::None;
+                    self.change_sending_state(SendingState::Ready);
                 }
-                return Poll::Pending;
-            };
+                (msg @ Some(_), SinkState::Ready(sink)) => {
+                    if ready!(sink.poll_ready_unpin(cx)).is_err() {
+                        self.close_sink_on_error("poll_ready_unpin");
+                        continue;
+                    }
 
-            let message = Message {
-                wantlist: Some(wantlist),
-                ..Message::default()
-            };
+                    let msg = msg.take().expect("msg is always Some here");
 
-            if sink.start_send_unpin(&message).is_err() {
-                // Something went wrong, retry
-                self.on_sink_error();
+                    if sink.start_send_unpin(&msg).is_err() {
+                        self.msg = Some(msg);
+                        self.close_sink_on_error("start_send_unpin");
+                        continue;
+                    }
+
+                    self.change_sending_state(SendingState::Sending(
+                        Instant::now(),
+                        self.connection_id,
+                    ));
+
+                    // Loop again, so `poll_flush` will be called and register a waker.
+                }
             }
-
-            // Loop again, so `poll_flush` will be called and register a waker.
         }
-    }
-
-    pub(crate) fn poll(
-        &mut self,
-        cx: &mut Context,
-    ) -> Poll<
-        ConnectionHandlerEvent<ReadyUpgrade<StreamProtocol>, StreamRequester, ToBehaviourEvent<S>>,
-    > {
-        if let Poll::Ready(ready) = self.poll_outgoing(cx) {
-            return Poll::Ready(ready);
-        }
-
-        Poll::Pending
     }
 }
 
 impl<const S: usize> fmt::Debug for ClientConnectionHandler<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("ClientConnectionHandler")
-    }
-}
-
-impl<const S: usize> Drop for ClientConnectionHandler<S> {
-    fn drop(&mut self) {
-        if let Some(state) = self.sending_state.take() {
-            let mut state = state.lock().unwrap();
-
-            // If sending was never done
-            if *state == SendingState::Sending {
-                *state = SendingState::Poisoned;
-                self.behaviour_waker.wake();
-            }
-        }
     }
 }
 
@@ -599,7 +649,7 @@ mod tests {
         let mut client = new_client().await;
 
         let peer1 = PeerId::random();
-        let mut _conn1 = client.new_connection_handler(peer1);
+        let mut conn1 = client.new_connection_handler(peer1);
 
         let peer2 = PeerId::random();
         let mut _conn2 = client.new_connection_handler(peer2);
@@ -611,9 +661,8 @@ mod tests {
         for _ in 0..2 {
             // wantlist with Have request will be generated
             let ev = poll_fn(|cx| client.poll(cx)).await;
-            let (peer_id, wantlist, send_state) = expect_send_wantlist_event(ev);
+            let (peer_id, wantlist) = expect_send_wantlist_event(ev);
 
-            assert!(peer_id == peer1 || peer_id == peer2);
             assert_eq!(wantlist.entries.len(), 1);
             assert!(wantlist.full);
 
@@ -622,6 +671,8 @@ mod tests {
             assert!(!entry.cancel);
             assert_eq!(entry.wantType, WantType::Have);
             assert!(entry.sendDontHave);
+
+            if peer_id == peer1 {}
 
             // Mark send state as ready
             *send_state.lock().unwrap() = SendingState::Ready;
@@ -905,16 +956,16 @@ mod tests {
         ClientBehaviour::<64, _>::new(ClientConfig::default(), store, None)
     }
 
-    fn expect_send_wantlist_event(
-        ev: ToSwarm<Event, ToHandlerEvent>,
-    ) -> (PeerId, ProtoWantlist, Arc<Mutex<SendingState>>) {
+    fn expect_send_wantlist_event(ev: ToSwarm<Event, ToHandlerEvent>) -> (PeerId, ProtoWantlist) {
         match ev {
             ToSwarm::NotifyHandler {
                 peer_id,
-                event: ToHandlerEvent::SendWantlist(wantlist, send_state),
+                event: ToHandlerEvent::SendWantlist(wantlist),
                 ..
-            } => (peer_id, wantlist, send_state),
+            } => (peer_id, wantlist),
             ev => panic!("Expecting ToHandlerEvent::SendWantlist, found {ev:?}"),
         }
     }
+
+    //fn expect_sending_state_notified_event(ev: ToSwarm<Event, ToHandlerEvent>) ->
 }

@@ -14,6 +14,7 @@ cid = "0.11"
 fnv = "1.0.5"
 futures = "0.3"
 futures-timer = "3"
+instant = "0.1.12"
 libp2p-core = "0.41"
 libp2p-identity = "0.2"
 libp2p-swarm = "0.44"
@@ -39,7 +40,7 @@ tracing-appender = "0.2.2"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 
 [features]
-wasm-bindgen = ["futures-timer/wasm-bindgen"]
+wasm-bindgen = ["futures-timer/wasm-bindgen", "instant/wasm-bindgen"]
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--cfg", "docs_rs"]
