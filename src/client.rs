@@ -611,361 +611,574 @@ impl<const S: usize> fmt::Debug for ClientConnectionHandler<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::message::mod_Message::mod_Wantlist::WantType;
+    use crate::cid_prefix::CidPrefix;
+    use crate::proto::message::mod_Message::mod_Wantlist::{Entry, WantType};
+    use crate::proto::message::mod_Message::{Block, BlockPresence, Wantlist};
     use crate::test_utils::{cid_of_data, poll_fn_once};
+    use crate::Behaviour;
+    use asynchronous_codec::FramedRead;
     use blockstore::InMemoryBlockstore;
-    use std::future::poll_fn;
-
-    #[tokio::test]
-    async fn get_known_cid() {
-        let mut client = new_client().await;
-
-        let cid1 = cid_of_data(b"1");
-        let query_id1 = client.get(&cid1);
-
-        let cid2 = cid_of_data(b"2");
-        let query_id2 = client.get(&cid2);
-
-        for _ in 0..2 {
-            let ev = poll_fn(|cx| client.poll(cx)).await;
-
-            match ev {
-                ToSwarm::GenerateEvent(Event::GetQueryResponse { query_id, data }) => {
-                    if query_id == query_id1 {
-                        assert_eq!(data, b"1");
-                    } else if query_id == query_id2 {
-                        assert_eq!(data, b"2");
-                    } else {
-                        unreachable!()
-                    }
-                }
-                _ => unreachable!(),
-            }
-        }
-    }
+    use futures::future::{self, Either};
+    use libp2p_stream::IncomingStreams;
+    use libp2p_swarm::Swarm;
+    use libp2p_swarm_test::SwarmExt;
+    use std::pin::pin;
+    use std::time::Duration;
+    use tokio::time::sleep;
 
     #[tokio::test]
     async fn get_unknown_cid_responds_with_have() {
-        let mut client = new_client().await;
+        let server = Swarm::new_ephemeral(|_| libp2p_stream::Behaviour::new());
+        let mut client =
+            Swarm::new_ephemeral(|_| Behaviour::<64, _>::new(InMemoryBlockstore::<64>::new()));
 
-        let peer1 = PeerId::random();
-        let mut conn1 = client.new_connection_handler(peer1);
-
-        let peer2 = PeerId::random();
-        let mut _conn2 = client.new_connection_handler(peer2);
+        let (mut server_control, mut server_incoming_streams) =
+            connect_to_server(&mut client, server).await;
 
         let cid1 = cid_of_data(b"x1");
-        let _query_id1 = client.get(&cid1);
+        let _query_id1 = client.behaviour_mut().get(&cid1);
 
-        // Wantlist will be generated for both peers
-        for _ in 0..2 {
-            // wantlist with Have request will be generated
-            let ev = poll_fn(|cx| client.poll(cx)).await;
-            let (peer_id, wantlist) = expect_send_wantlist_event(ev);
+        let msgs = collect_incoming_messages(&mut server_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![Entry {
+                        block: cid1.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    }],
+                    full: false,
+                }),
+                payload: vec![],
+                blockPresences: vec![],
+                pendingBytes: 0
+            }]
+        );
 
-            assert_eq!(wantlist.entries.len(), 1);
-            assert!(wantlist.full);
+        send_message_to_client(
+            &mut server_control,
+            &mut client,
+            Message {
+                wantlist: None,
+                payload: vec![],
+                blockPresences: vec![BlockPresence {
+                    cid: cid1.to_bytes(),
+                    type_pb: BlockPresenceType::Have,
+                }],
+                pendingBytes: 0,
+            },
+        )
+        .await;
 
-            let entry = &wantlist.entries[0];
-            assert_eq!(entry.block, cid1.to_bytes());
-            assert!(!entry.cancel);
-            assert_eq!(entry.wantType, WantType::Have);
-            assert!(entry.sendDontHave);
-
-            if peer_id == peer1 {}
-
-            // Mark send state as ready
-            *send_state.lock().unwrap() = SendingState::Ready;
-        }
-
-        // Simulate that peer1 responsed with Have
-        let mut client_msg = ClientMessage::default();
-        client_msg
-            .block_presences
-            .insert(cid1, BlockPresenceType::Have);
-        client.process_incoming_message(peer1, client_msg);
-
-        // wantlist with Block request will be generated
-        let ev = poll_fn(|cx| client.poll(cx)).await;
-        let (peer_id, wantlist, send_state) = expect_send_wantlist_event(ev);
-
-        assert_eq!(peer_id, peer1);
-        assert_eq!(wantlist.entries.len(), 1);
-        assert!(!wantlist.full);
-
-        let entry = &wantlist.entries[0];
-        assert_eq!(entry.block, cid1.to_bytes());
-        assert!(!entry.cancel);
-        assert_eq!(entry.wantType, WantType::Block);
-        assert!(entry.sendDontHave);
-
-        // Mark send state as ready
-        *send_state.lock().unwrap() = SendingState::Ready;
+        let msgs = collect_incoming_messages(&mut server_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![Entry {
+                        block: cid1.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Block,
+                        sendDontHave: true,
+                    }],
+                    full: false,
+                }),
+                payload: vec![],
+                blockPresences: vec![],
+                pendingBytes: 0
+            }]
+        );
     }
 
     #[tokio::test]
     async fn get_unknown_cid_responds_with_dont_have() {
-        let mut client = new_client().await;
+        let server1 = Swarm::new_ephemeral(|_| libp2p_stream::Behaviour::new());
+        let server2 = Swarm::new_ephemeral(|_| libp2p_stream::Behaviour::new());
+        let mut client =
+            Swarm::new_ephemeral(|_| Behaviour::<64, _>::new(InMemoryBlockstore::<64>::new()));
 
-        let peer1 = PeerId::random();
-        let mut _conn1 = client.new_connection_handler(peer1);
-
-        let peer2 = PeerId::random();
-        let mut _conn2 = client.new_connection_handler(peer2);
+        let (mut server1_control, mut server1_incoming_streams) =
+            connect_to_server(&mut client, server1).await;
+        let (_server2_control, mut server2_incoming_streams) =
+            connect_to_server(&mut client, server2).await;
 
         let cid1 = cid_of_data(b"x1");
-        let _query_id1 = client.get(&cid1);
+        let _query_id1 = client.behaviour_mut().get(&cid1);
 
-        // Wantlist will be generated for both peers
-        for _ in 0..2 {
-            // wantlist with Have request will be generated
-            let ev = poll_fn(|cx| client.poll(cx)).await;
-            let (peer_id, wantlist, send_state) = expect_send_wantlist_event(ev);
+        let expected_msgs = vec![Message {
+            wantlist: Some(Wantlist {
+                entries: vec![Entry {
+                    block: cid1.to_bytes(),
+                    priority: 1,
+                    cancel: false,
+                    wantType: WantType::Have,
+                    sendDontHave: true,
+                }],
+                full: false,
+            }),
+            payload: vec![],
+            blockPresences: vec![],
+            pendingBytes: 0,
+        }];
 
-            assert!(peer_id == peer1 || peer_id == peer2);
-            assert_eq!(wantlist.entries.len(), 1);
-            assert!(wantlist.full);
+        let msgs = collect_incoming_messages(&mut server1_incoming_streams, &mut client).await;
+        assert_eq!(&msgs, &expected_msgs);
 
-            let entry = &wantlist.entries[0];
-            assert_eq!(entry.block, cid1.to_bytes());
-            assert!(!entry.cancel);
-            assert_eq!(entry.wantType, WantType::Have);
-            assert!(entry.sendDontHave);
+        let msgs = collect_incoming_messages(&mut server2_incoming_streams, &mut client).await;
+        assert_eq!(&msgs, &expected_msgs);
 
-            // Mark send state as ready
-            *send_state.lock().unwrap() = SendingState::Ready;
-        }
+        send_message_to_client(
+            &mut server1_control,
+            &mut client,
+            Message {
+                wantlist: None,
+                payload: vec![],
+                blockPresences: vec![BlockPresence {
+                    cid: cid1.to_bytes(),
+                    type_pb: BlockPresenceType::DontHave,
+                }],
+                pendingBytes: 0,
+            },
+        )
+        .await;
 
-        // Simulate that peer1 responsed with DontHave
-        let mut client_msg = ClientMessage::default();
-        client_msg
-            .block_presences
-            .insert(cid1, BlockPresenceType::DontHave);
-        client.process_incoming_message(peer1, client_msg);
-
-        // Simulate that full wantlist is needed
-        for peer_state in client.peers.values_mut() {
+        // Mark that full wantlist must be send
+        for peer_state in client.behaviour_mut().client.peers.values_mut() {
             peer_state.send_full = true;
         }
 
-        for _ in 0..2 {
-            let ev = poll_fn(|cx| client.poll(cx)).await;
-            let (peer_id, wantlist, send_state) = expect_send_wantlist_event(ev);
+        // `client` sends a full wantlist to `server1` but without the `cid1` because server
+        // already replied with DontHave.
+        let msgs = collect_incoming_messages(&mut server1_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![],
+                    full: true,
+                }),
+                payload: vec![],
+                blockPresences: vec![],
+                pendingBytes: 0,
+            }]
+        );
 
-            if peer_id == peer1 {
-                // full wantlist of peer1 will be empty because it alreayd replied with DontHave
-                assert!(wantlist.entries.is_empty());
-                assert!(wantlist.full);
-            } else if peer_id == peer2 {
-                assert_eq!(wantlist.entries.len(), 1);
-                assert!(wantlist.full);
-
-                let entry = &wantlist.entries[0];
-                assert_eq!(entry.block, cid1.to_bytes());
-                assert!(!entry.cancel);
-                assert_eq!(entry.wantType, WantType::Have);
-                assert!(entry.sendDontHave);
-            } else {
-                panic!("Unknown peer id");
-            }
-
-            // Mark send state as ready
-            *send_state.lock().unwrap() = SendingState::Ready;
-        }
-
-        // No other events should be produced
-        assert!(dbg!(poll_fn_once(|cx| client.poll(cx)).await).is_none());
+        let msgs = collect_incoming_messages(&mut server2_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![Entry {
+                        block: cid1.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    }],
+                    full: true,
+                }),
+                payload: vec![],
+                blockPresences: vec![],
+                pendingBytes: 0,
+            }]
+        );
     }
 
     #[tokio::test]
     async fn get_unknown_cid_responds_with_block() {
-        let mut client = new_client().await;
+        let server = Swarm::new_ephemeral(|_| libp2p_stream::Behaviour::new());
+        let mut client =
+            Swarm::new_ephemeral(|_| Behaviour::<64, _>::new(InMemoryBlockstore::<64>::new()));
 
-        let peer = PeerId::random();
-        let mut _conn = client.new_connection_handler(peer);
+        let (mut server_control, mut server_incoming_streams) =
+            connect_to_server(&mut client, server).await;
 
-        let cid1 = cid_of_data(b"x1");
-        let query_id1 = client.get(&cid1);
+        let data1 = b"x1";
+        let cid1 = cid_of_data(data1);
+        let query_id1 = client.behaviour_mut().get(&cid1);
 
-        // wantlist with Have request will be generated
-        let ev = poll_fn(|cx| client.poll(cx)).await;
-        let (peer_id, wantlist, send_state) = expect_send_wantlist_event(ev);
+        let msgs = collect_incoming_messages(&mut server_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![Entry {
+                        block: cid1.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    }],
+                    full: false,
+                }),
+                payload: vec![],
+                blockPresences: vec![],
+                pendingBytes: 0
+            }]
+        );
 
-        assert_eq!(peer_id, peer);
-        assert_eq!(wantlist.entries.len(), 1);
-        assert!(wantlist.full);
+        let ev = send_message_to_client_and_wait_beheviour_event(
+            &mut server_control,
+            &mut client,
+            Message {
+                wantlist: None,
+                payload: vec![Block {
+                    prefix: CidPrefix::from_cid(&cid1).to_bytes(),
+                    data: data1.to_vec(),
+                }],
+                blockPresences: vec![],
+                pendingBytes: 0,
+            },
+        )
+        .await;
 
-        let entry = &wantlist.entries[0];
-        assert_eq!(entry.block, cid1.to_bytes());
-        assert!(!entry.cancel);
-        assert_eq!(entry.wantType, WantType::Have);
-        assert!(entry.sendDontHave);
-
-        // Mark send state as ready
-        *send_state.lock().unwrap() = SendingState::Ready;
-
-        // Simulate that peer responsed with a block
-        let mut client_msg = ClientMessage::default();
-        client_msg.blocks.insert(cid1, b"x1".to_vec());
-        client.process_incoming_message(peer, client_msg);
-
-        // Receive an event with the found data
-        let ev = poll_fn(|cx| client.poll(cx)).await;
-
-        let (query_id, data) = match ev {
-            ToSwarm::GenerateEvent(Event::GetQueryResponse { query_id, data }) => (query_id, data),
-            _ => unreachable!(),
-        };
-
+        let (query_id, data) = unwrap_get_query_reponse(ev);
         assert_eq!(query_id, query_id1);
-        assert_eq!(data, b"x1");
+        assert_eq!(data, data1);
 
         // Poll once more for the store to be updated. This does not produce an event.
-        poll_fn_once(|cx| client.poll(cx)).await;
-        assert_eq!(client.store.get(&cid1).await.unwrap().unwrap(), b"x1");
+        poll_fn_once(|cx| client.poll_next_unpin(cx)).await;
+        assert_eq!(
+            client
+                .behaviour()
+                .client
+                .store
+                .get(&cid1)
+                .await
+                .unwrap()
+                .unwrap(),
+            data1
+        );
     }
 
     #[tokio::test]
-    async fn full_wantlist_then_update() {
-        let mut client = new_client().await;
+    async fn update_wantlist() {
+        let server = Swarm::new_ephemeral(|_| libp2p_stream::Behaviour::new());
+        let mut client =
+            Swarm::new_ephemeral(|_| Behaviour::<64, _>::new(InMemoryBlockstore::<64>::new()));
 
-        let peer = PeerId::random();
-        let mut _conn = client.new_connection_handler(peer);
+        let (_server_control, mut server_incoming_streams) =
+            connect_to_server(&mut client, server).await;
 
         let cid1 = cid_of_data(b"x1");
-        let _query_id1 = client.get(&cid1);
-
         let cid2 = cid_of_data(b"x2");
-        let _query_id2 = client.get(&cid2);
-
-        let ev = poll_fn(|cx| client.poll(cx)).await;
-
-        let (peer_id, wantlist, send_state) = expect_send_wantlist_event(ev);
-
-        assert_eq!(peer_id, peer);
-        assert_eq!(wantlist.entries.len(), 2);
-        assert!(wantlist.full);
-
-        let entry1 = wantlist
-            .entries
-            .iter()
-            .find(|item| item.block == cid1.to_bytes())
-            .unwrap();
-        assert!(!entry1.cancel);
-        assert_eq!(entry1.wantType, WantType::Have);
-        assert!(entry1.sendDontHave);
-
-        let entry2 = wantlist
-            .entries
-            .iter()
-            .find(|item| item.block == cid2.to_bytes())
-            .unwrap();
-        assert!(!entry2.cancel);
-        assert_eq!(entry2.wantType, WantType::Have);
-        assert!(entry2.sendDontHave);
-
-        // Mark send state as ready
-        *send_state.lock().unwrap() = SendingState::Ready;
-
         let cid3 = cid_of_data(b"x3");
-        let _query_id3 = client.get(&cid3);
 
-        let ev = poll_fn(|cx| client.poll(cx)).await;
-        let (peer_id, wantlist, send_state) = expect_send_wantlist_event(ev);
+        let _query_id1 = client.behaviour_mut().get(&cid1);
+        let _query_id2 = client.behaviour_mut().get(&cid2);
 
-        assert_eq!(peer_id, peer);
-        assert_eq!(wantlist.entries.len(), 1);
-        assert!(!wantlist.full);
+        let msgs = collect_incoming_messages(&mut server_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![
+                        Entry {
+                            block: cid1.to_bytes(),
+                            priority: 1,
+                            cancel: false,
+                            wantType: WantType::Have,
+                            sendDontHave: true,
+                        },
+                        Entry {
+                            block: cid2.to_bytes(),
+                            priority: 1,
+                            cancel: false,
+                            wantType: WantType::Have,
+                            sendDontHave: true,
+                        }
+                    ],
+                    full: false,
+                }),
+                payload: vec![],
+                blockPresences: vec![],
+                pendingBytes: 0
+            }]
+        );
 
-        let entry = &wantlist.entries[0];
-        assert_eq!(entry.block, cid3.to_bytes());
-        assert!(!entry.cancel);
-        assert_eq!(entry.wantType, WantType::Have);
-        assert!(entry.sendDontHave);
+        let _query_id3 = client.behaviour_mut().get(&cid3);
 
-        // Mark send state as ready
-        *send_state.lock().unwrap() = SendingState::Ready;
+        let msgs = collect_incoming_messages(&mut server_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![Entry {
+                        block: cid3.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    }],
+                    full: false,
+                }),
+                payload: vec![],
+                blockPresences: vec![],
+                pendingBytes: 0
+            }]
+        );
     }
 
     #[tokio::test]
     async fn request_then_cancel() {
-        let mut client = new_client().await;
+        let server = Swarm::new_ephemeral(|_| libp2p_stream::Behaviour::new());
+        let mut client =
+            Swarm::new_ephemeral(|_| Behaviour::<64, _>::new(InMemoryBlockstore::<64>::new()));
 
-        let peer = PeerId::random();
-        let mut _conn = client.new_connection_handler(peer);
+        let (_server_control, mut server_incoming_streams) =
+            connect_to_server(&mut client, server).await;
 
         let cid1 = cid_of_data(b"x1");
-        let query_id1 = client.get(&cid1);
-
         let cid2 = cid_of_data(b"x2");
-        let query_id2 = client.get(&cid2);
+
+        let query_id1 = client.behaviour_mut().get(&cid1);
+        let query_id2 = client.behaviour_mut().get(&cid2);
 
         // This cancel will not generate any messages because request was not send yet
-        client.cancel(query_id2);
+        client.behaviour_mut().cancel(query_id2);
 
-        // wantlist with Have request will be generated
-        let ev = poll_fn(|cx| client.poll(cx)).await;
-        let (peer_id, wantlist, send_state) = expect_send_wantlist_event(ev);
-
-        assert_eq!(peer_id, peer);
-        assert_eq!(wantlist.entries.len(), 1);
-        assert!(wantlist.full);
-
-        let entry = &wantlist.entries[0];
-        assert_eq!(entry.block, cid1.to_bytes());
-        assert!(!entry.cancel);
-        assert_eq!(entry.wantType, WantType::Have);
-        assert!(entry.sendDontHave);
-
-        // Mark send state as ready
-        *send_state.lock().unwrap() = SendingState::Ready;
+        let msgs = collect_incoming_messages(&mut server_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![Entry {
+                        block: cid1.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    },],
+                    full: false,
+                }),
+                payload: vec![],
+                blockPresences: vec![],
+                pendingBytes: 0
+            }]
+        );
 
         // This cancel should produce a message for cancelling the request
-        client.cancel(query_id1);
+        client.behaviour_mut().cancel(query_id1);
 
-        // wantlist with Cancel request will be generated
-        let ev = poll_fn(|cx| client.poll(cx)).await;
-        let (peer_id, wantlist, _) = expect_send_wantlist_event(ev);
-
-        assert_eq!(peer_id, peer);
-        assert_eq!(wantlist.entries.len(), 1);
-        assert!(!wantlist.full);
-
-        let entry = &wantlist.entries[0];
-        assert_eq!(entry.block, cid1.to_bytes());
-        assert!(entry.cancel);
-
-        // Mark send state as ready
-        *send_state.lock().unwrap() = SendingState::Ready;
+        let msgs = collect_incoming_messages(&mut server_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![Entry {
+                        block: cid1.to_bytes(),
+                        cancel: true,
+                        // The following fields can be anything but our client
+                        // sends their default value.
+                        priority: 0,
+                        wantType: WantType::Block,
+                        sendDontHave: false,
+                    },],
+                    full: false,
+                }),
+                payload: vec![],
+                blockPresences: vec![],
+                pendingBytes: 0
+            }]
+        );
     }
 
-    async fn blockstore() -> Arc<InMemoryBlockstore<64>> {
-        let store = Arc::new(InMemoryBlockstore::<64>::new());
+    #[tokio::test]
+    async fn get_known_cid() {
+        let data1 = b"x1";
+        let cid1 = cid_of_data(data1);
+        let cid2 = cid_of_data(b"x2");
 
-        for i in 0..16 {
-            let data = format!("{i}").into_bytes();
-            let cid = cid_of_data(&data);
-            store.put_keyed(&cid, &data).await.unwrap();
+        let blockstore = InMemoryBlockstore::<64>::new();
+        blockstore.put_keyed(&cid1, data1).await.unwrap();
+
+        let server = Swarm::new_ephemeral(|_| libp2p_stream::Behaviour::new());
+        let mut client = Swarm::new_ephemeral(move |_| Behaviour::<64, _>::new(blockstore));
+
+        let (_server_control, mut server_incoming_streams) =
+            connect_to_server(&mut client, server).await;
+
+        let query_id1 = client.behaviour_mut().get(&cid1);
+        let _query_id2 = client.behaviour_mut().get(&cid2);
+
+        let (msgs, ev) = collect_incoming_messages_and_behaviour_event(
+            &mut server_incoming_streams,
+            &mut client,
+        )
+        .await;
+
+        // `cid1` is known, so client replies without sending a request.
+        let (query_id, data) = unwrap_get_query_reponse(ev);
+        assert_eq!(query_id, query_id1);
+        assert_eq!(data, data1);
+
+        // `cid2` is not know, so client sends a request.
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![Entry {
+                        block: cid2.to_bytes(),
+                        priority: 1,
+                        cancel: false,
+                        wantType: WantType::Have,
+                        sendDontHave: true,
+                    },],
+                    full: false,
+                }),
+                payload: vec![],
+                blockPresences: vec![],
+                pendingBytes: 0
+            }]
+        );
+    }
+
+    async fn connect_to_server(
+        client: &mut Swarm<Behaviour<64, InMemoryBlockstore<64>>>,
+        mut server: Swarm<libp2p_stream::Behaviour>,
+    ) -> (libp2p_stream::Control, libp2p_stream::IncomingStreams) {
+        let mut server_control = server.behaviour().new_control();
+        let mut server_incoming_streams = server_control
+            .accept(StreamProtocol::new("/ipfs/bitswap/1.2.0"))
+            .unwrap();
+
+        server.listen().with_memory_addr_external().await;
+        client.connect(&mut server).await;
+
+        // Server can be controled by `server_control` but it still needs
+        // to be driven by the executor.
+        tokio::spawn(server.loop_on_next());
+
+        // The first message is always a full list of zero entries
+        let msgs = collect_incoming_messages(&mut server_incoming_streams, client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(ProtoWantlist {
+                    entries: vec![],
+                    full: true,
+                }),
+                payload: vec![],
+                blockPresences: vec![],
+                pendingBytes: 0
+            }]
+        );
+
+        (server_control, server_incoming_streams)
+    }
+
+    async fn collect_incoming_messages(
+        server_incoming_streams: &mut IncomingStreams,
+        client: &mut Swarm<Behaviour<64, InMemoryBlockstore<64>>>,
+    ) -> Vec<Message> {
+        let server_fut = pin!(async {
+            let (peer_id, stream) = server_incoming_streams.next().await.unwrap();
+            let stream = FramedRead::new(stream, Codec);
+            let msgs = stream.map(|res| res.unwrap()).collect::<Vec<_>>().await;
+            (peer_id, msgs)
+        });
+
+        let client_peer_id = *client.local_peer_id();
+        let client_fut = pin!(client.next_behaviour_event());
+
+        match future::select(server_fut, client_fut).await {
+            Either::Left(((peer_id, msgs), _)) => {
+                assert_eq!(peer_id, client_peer_id);
+                msgs
+            }
+            Either::Right((ev, _)) => panic!("Received behaviour event on client: {ev:?}"),
+        }
+    }
+
+    async fn collect_incoming_messages_and_behaviour_event(
+        server_incoming_streams: &mut IncomingStreams,
+        client: &mut Swarm<Behaviour<64, InMemoryBlockstore<64>>>,
+    ) -> (Vec<Message>, Event) {
+        let mut server_fut = async {
+            let (peer_id, stream) = server_incoming_streams.next().await.unwrap();
+            let stream = FramedRead::new(stream, Codec);
+            let msgs = stream.map(|res| res.unwrap()).collect::<Vec<_>>().await;
+            (peer_id, msgs)
+        }
+        .boxed()
+        .fuse();
+
+        let mut msgs = None;
+        let mut ev = None;
+
+        // We need to keep polling `client` even after it generates an event
+        // otherwise `server_fut` will not progress.
+        while msgs.is_none() || ev.is_none() {
+            tokio::select! {
+                (peer_id, m) = &mut server_fut => {
+                    assert_eq!(peer_id, *client.local_peer_id());
+                    msgs = Some(m);
+                }
+                e = client.next_behaviour_event() => {
+                    assert!(ev.is_none());
+                    ev = Some(e);
+                }
+            }
         }
 
-        store
+        (msgs.unwrap(), ev.unwrap())
     }
 
-    async fn new_client() -> ClientBehaviour<64, InMemoryBlockstore<64>> {
-        let store = blockstore().await;
-        ClientBehaviour::<64, _>::new(ClientConfig::default(), store, None)
+    async fn send_message_to_client(
+        server_control: &mut libp2p_stream::Control,
+        client: &mut Swarm<Behaviour<64, InMemoryBlockstore<64>>>,
+        msg: Message,
+    ) {
+        let client_peer_id = *client.local_peer_id();
+
+        let server_fut = pin!(async {
+            let stream = server_control
+                .open_stream(client_peer_id, StreamProtocol::new("/ipfs/bitswap/1.2.0"))
+                .await
+                .unwrap();
+            let mut stream = FramedWrite::new(stream, Codec);
+            stream.send(&msg).await.unwrap();
+            // Wait a bit for the client tp process it
+            sleep(Duration::from_millis(10)).await;
+        });
+
+        let client_fut = pin!(client.next_behaviour_event());
+
+        match future::select(server_fut, client_fut).await {
+            Either::Left((_, _)) => {}
+            Either::Right((ev, _)) => panic!("Received behaviour event on client: {ev:?}"),
+        }
     }
 
-    fn expect_send_wantlist_event(ev: ToSwarm<Event, ToHandlerEvent>) -> (PeerId, ProtoWantlist) {
+    async fn send_message_to_client_and_wait_beheviour_event(
+        server_control: &mut libp2p_stream::Control,
+        client: &mut Swarm<Behaviour<64, InMemoryBlockstore<64>>>,
+        msg: Message,
+    ) -> Event {
+        let client_peer_id = *client.local_peer_id();
+
+        let server_fut = pin!(async {
+            let stream = server_control
+                .open_stream(client_peer_id, StreamProtocol::new("/ipfs/bitswap/1.2.0"))
+                .await
+                .unwrap();
+            let mut stream = FramedWrite::new(stream, Codec);
+            stream.send(&msg).await.unwrap();
+        });
+
+        let client_fut = pin!(client.next_behaviour_event());
+
+        future::join(server_fut, client_fut).await.1
+    }
+
+    fn unwrap_get_query_reponse(ev: Event) -> (QueryId, Vec<u8>) {
         match ev {
-            ToSwarm::NotifyHandler {
-                peer_id,
-                event: ToHandlerEvent::SendWantlist(wantlist),
-                ..
-            } => (peer_id, wantlist),
-            ev => panic!("Expecting ToHandlerEvent::SendWantlist, found {ev:?}"),
+            Event::GetQueryResponse { query_id, data } => (query_id, data),
+            ev => panic!("Expected Event::GetQueryResponse, got {ev:?}"),
         }
     }
-
-    //fn expect_sending_state_notified_event(ev: ToSwarm<Event, ToHandlerEvent>) ->
 }

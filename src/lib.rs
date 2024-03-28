@@ -47,7 +47,7 @@ where
     B: Blockstore + Send + Sync + 'static,
 {
     protocol: StreamProtocol,
-    client: ClientBehaviour<MAX_MULTIHASH_SIZE, B>,
+    pub(crate) client: ClientBehaviour<MAX_MULTIHASH_SIZE, B>,
     server: ServerBehaviour<MAX_MULTIHASH_SIZE, B>,
     multihasher: Arc<MultihasherTable<MAX_MULTIHASH_SIZE>>,
 }
