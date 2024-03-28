@@ -86,7 +86,7 @@ jobs:
           cargo-
 
     - name: Run tests
-      run:
+      run: |
         cargo +stable check --locked
         cargo +stable test --locked
 
