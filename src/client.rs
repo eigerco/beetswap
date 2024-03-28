@@ -623,7 +623,6 @@ mod tests {
     use libp2p_swarm::Swarm;
     use libp2p_swarm_test::SwarmExt;
     use std::pin::pin;
-    use std::time::Duration;
     use tokio::time::sleep;
 
     #[tokio::test]
