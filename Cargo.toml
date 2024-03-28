@@ -35,6 +35,7 @@ libp2p-noise = "0.44"
 libp2p-stream = "0.1.0-alpha"
 libp2p-swarm-test = "0.3.0"
 libp2p-yamux = "0.45"
+log = "0.4.18" # needed for minimal-versions
 multihash = "0.19"
 multihash-codetable = { version = "0.1", features = ["digest", "sha2"] }
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }

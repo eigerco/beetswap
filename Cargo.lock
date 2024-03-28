@@ -503,6 +503,7 @@ dependencies = [
  "libp2p-swarm",
  "libp2p-swarm-test",
  "libp2p-yamux",
+ "log",
  "multihash",
  "multihash-codetable",
  "quick-protobuf",
