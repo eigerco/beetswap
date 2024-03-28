@@ -634,6 +634,19 @@ mod tests {
         let (mut server_control, mut server_incoming_streams) =
             connect_to_server(&mut client, server).await;
 
+        // Initial full list sent to server
+        let msgs = collect_incoming_messages(&mut server_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![],
+                    full: true,
+                }),
+                ..Default::default()
+            }]
+        );
+
         let cid1 = cid_of_data(b"x1");
         let _query_id1 = client.behaviour_mut().get(&cid1);
 
@@ -651,9 +664,7 @@ mod tests {
                     }],
                     full: false,
                 }),
-                payload: vec![],
-                blockPresences: vec![],
-                pendingBytes: 0
+                ..Default::default()
             }]
         );
 
@@ -704,6 +715,32 @@ mod tests {
             connect_to_server(&mut client, server1).await;
         let (_server2_control, mut server2_incoming_streams) =
             connect_to_server(&mut client, server2).await;
+
+        // Initial full list sent to server1
+        let msgs = collect_incoming_messages(&mut server1_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![],
+                    full: true,
+                }),
+                ..Default::default()
+            }]
+        );
+
+        // Initial full list sent to server2
+        let msgs = collect_incoming_messages(&mut server2_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![],
+                    full: true,
+                }),
+                ..Default::default()
+            }]
+        );
 
         let cid1 = cid_of_data(b"x1");
         let _query_id1 = client.behaviour_mut().get(&cid1);
@@ -760,9 +797,7 @@ mod tests {
                     entries: vec![],
                     full: true,
                 }),
-                payload: vec![],
-                blockPresences: vec![],
-                pendingBytes: 0,
+                ..Default::default()
             }]
         );
 
@@ -780,9 +815,7 @@ mod tests {
                     }],
                     full: true,
                 }),
-                payload: vec![],
-                blockPresences: vec![],
-                pendingBytes: 0,
+                ..Default::default()
             }]
         );
     }
@@ -795,6 +828,19 @@ mod tests {
 
         let (mut server_control, mut server_incoming_streams) =
             connect_to_server(&mut client, server).await;
+
+        // Initial full list sent to server
+        let msgs = collect_incoming_messages(&mut server_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![],
+                    full: true,
+                }),
+                ..Default::default()
+            }]
+        );
 
         let data1 = b"x1";
         let cid1 = cid_of_data(data1);
@@ -863,6 +909,19 @@ mod tests {
         let (_server_control, mut server_incoming_streams) =
             connect_to_server(&mut client, server).await;
 
+        // Initial full list sent to server
+        let msgs = collect_incoming_messages(&mut server_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![],
+                    full: true,
+                }),
+                ..Default::default()
+            }]
+        );
+
         let cid1 = cid_of_data(b"x1");
         let cid2 = cid_of_data(b"x2");
         let cid3 = cid_of_data(b"x3");
@@ -893,9 +952,7 @@ mod tests {
                     ],
                     full: false,
                 }),
-                payload: vec![],
-                blockPresences: vec![],
-                pendingBytes: 0
+                ..Default::default()
             }]
         );
 
@@ -915,9 +972,7 @@ mod tests {
                     }],
                     full: false,
                 }),
-                payload: vec![],
-                blockPresences: vec![],
-                pendingBytes: 0
+                ..Default::default()
             }]
         );
     }
@@ -930,6 +985,19 @@ mod tests {
 
         let (_server_control, mut server_incoming_streams) =
             connect_to_server(&mut client, server).await;
+
+        // Initial full list sent to server
+        let msgs = collect_incoming_messages(&mut server_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![],
+                    full: true,
+                }),
+                ..Default::default()
+            }]
+        );
 
         let cid1 = cid_of_data(b"x1");
         let cid2 = cid_of_data(b"x2");
@@ -954,9 +1022,7 @@ mod tests {
                     },],
                     full: false,
                 }),
-                payload: vec![],
-                blockPresences: vec![],
-                pendingBytes: 0
+                ..Default::default()
             }]
         );
 
@@ -971,17 +1037,11 @@ mod tests {
                     entries: vec![Entry {
                         block: cid1.to_bytes(),
                         cancel: true,
-                        // The following fields can be anything but our client
-                        // sends their default value.
-                        priority: 0,
-                        wantType: WantType::Block,
-                        sendDontHave: false,
+                        ..Default::default()
                     },],
                     full: false,
                 }),
-                payload: vec![],
-                blockPresences: vec![],
-                pendingBytes: 0
+                ..Default::default()
             }]
         );
     }
@@ -1000,6 +1060,19 @@ mod tests {
 
         let (_server_control, mut server_incoming_streams) =
             connect_to_server(&mut client, server).await;
+
+        // Initial full list sent to server
+        let msgs = collect_incoming_messages(&mut server_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![],
+                    full: true,
+                }),
+                ..Default::default()
+            }]
+        );
 
         let query_id1 = client.behaviour_mut().get(&cid1);
         let _query_id2 = client.behaviour_mut().get(&cid2);
@@ -1029,9 +1102,7 @@ mod tests {
                     },],
                     full: false,
                 }),
-                payload: vec![],
-                blockPresences: vec![],
-                pendingBytes: 0
+                ..Default::default()
             }]
         );
     }
@@ -1041,7 +1112,7 @@ mod tests {
         mut server: Swarm<libp2p_stream::Behaviour>,
     ) -> (libp2p_stream::Control, libp2p_stream::IncomingStreams) {
         let mut server_control = server.behaviour().new_control();
-        let mut server_incoming_streams = server_control
+        let server_incoming_streams = server_control
             .accept(StreamProtocol::new("/ipfs/bitswap/1.2.0"))
             .unwrap();
 
@@ -1051,21 +1122,6 @@ mod tests {
         // Server can be controled by `server_control` but it still needs
         // to be driven by the executor.
         tokio::spawn(server.loop_on_next());
-
-        // The first message is always a full list of zero entries
-        let msgs = collect_incoming_messages(&mut server_incoming_streams, client).await;
-        assert_eq!(
-            msgs,
-            vec![Message {
-                wantlist: Some(ProtoWantlist {
-                    entries: vec![],
-                    full: true,
-                }),
-                payload: vec![],
-                blockPresences: vec![],
-                pendingBytes: 0
-            }]
-        );
 
         (server_control, server_incoming_streams)
     }
