@@ -936,14 +936,14 @@ mod tests {
                 wantlist: Some(Wantlist {
                     entries: vec![
                         Entry {
-                            block: cid1.to_bytes(),
+                            block: cid2.to_bytes(),
                             priority: 1,
                             cancel: false,
                             wantType: WantType::Have,
                             sendDontHave: true,
                         },
                         Entry {
-                            block: cid2.to_bytes(),
+                            block: cid1.to_bytes(),
                             priority: 1,
                             cancel: false,
                             wantType: WantType::Have,
@@ -1047,6 +1047,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn request_before_connect() {
+        let server = Swarm::new_ephemeral(|_| libp2p_stream::Behaviour::new());
+        let mut client =
+            Swarm::new_ephemeral(|_| Behaviour::<64, _>::new(InMemoryBlockstore::<64>::new()));
+
+        let cid1 = cid_of_data(b"x1");
+        let cid2 = cid_of_data(b"x2");
+        let cid3 = cid_of_data(b"x3");
+
+        let _query_id1 = client.behaviour_mut().get(&cid1);
+        let query_id2 = client.behaviour_mut().get(&cid2);
+        let _query_id3 = client.behaviour_mut().get(&cid3);
+
+        // Cancel request of `cid2`.
+        client.behaviour_mut().cancel(query_id2);
+
+        let (_server_control, mut server_incoming_streams) =
+            connect_to_server(&mut client, server).await;
+
+        // Initial full list sent to server should contain `cid1` and `cid3`.
+        let msgs = collect_incoming_messages(&mut server_incoming_streams, &mut client).await;
+        assert_eq!(
+            msgs,
+            vec![Message {
+                wantlist: Some(Wantlist {
+                    entries: vec![
+                        Entry {
+                            block: cid3.to_bytes(),
+                            priority: 1,
+                            cancel: false,
+                            wantType: WantType::Have,
+                            sendDontHave: true,
+                        },
+                        Entry {
+                            block: cid1.to_bytes(),
+                            priority: 1,
+                            cancel: false,
+                            wantType: WantType::Have,
+                            sendDontHave: true,
+                        }
+                    ],
+                    full: true,
+                }),
+                ..Default::default()
+            }]
+        );
+    }
+
+    #[tokio::test]
     async fn get_known_cid() {
         let data1 = b"x1";
         let cid1 = cid_of_data(data1);
@@ -1141,8 +1190,23 @@ mod tests {
         let client_fut = pin!(client.next_behaviour_event());
 
         match future::select(server_fut, client_fut).await {
-            Either::Left(((peer_id, msgs), _)) => {
+            Either::Left(((peer_id, mut msgs), _)) => {
                 assert_eq!(peer_id, client_peer_id);
+
+                // Sort message for easier testing
+                for msg in &mut msgs {
+                    if let Some(wantlist) = &mut msg.wantlist {
+                        wantlist
+                            .entries
+                            .sort_by(|entry1, entry2| entry1.block.cmp(&entry2.block));
+                    }
+
+                    msg.payload
+                        .sort_by(|block1, block2| block1.data.cmp(&block2.data));
+                    msg.blockPresences
+                        .sort_by(|presence1, presence2| presence1.cid.cmp(&presence2.cid));
+                }
+
                 msgs
             }
             Either::Right((ev, _)) => panic!("Received behaviour event on client: {ev:?}"),
