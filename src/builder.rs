@@ -20,7 +20,7 @@ use crate::{Behaviour, Error, Result};
 /// # }
 pub struct BehaviourBuilder<const S: usize, B>
 where
-    B: Blockstore + Send + Sync + 'static,
+    B: Blockstore + 'static,
 {
     protocol_prefix: Option<String>,
     blockstore: B,
@@ -30,7 +30,7 @@ where
 
 impl<const S: usize, B> BehaviourBuilder<S, B>
 where
-    B: Blockstore + Send + Sync + 'static,
+    B: Blockstore + 'static,
 {
     /// Creates a new builder for [`Behaviour`].
     pub(crate) fn new(blockstore: B) -> Self {

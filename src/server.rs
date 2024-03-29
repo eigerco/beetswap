@@ -133,7 +133,7 @@ impl<const S: usize> PeerWantlist<S> {
 
 impl<const S: usize, B> ServerBehaviour<S, B>
 where
-    B: Blockstore + Send + Sync + 'static,
+    B: Blockstore + 'static,
 {
     pub(crate) fn new(store: Arc<B>, protocol_prefix: Option<&str>) -> Self {
         let protocol = stream_protocol(protocol_prefix, "/ipfs/bitswap/1.2.0")
