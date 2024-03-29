@@ -1261,7 +1261,7 @@ mod tests {
                 .unwrap();
             let mut stream = FramedWrite::new(stream, Codec);
             stream.send(&msg).await.unwrap();
-            // Wait a bit for the client tp process it
+            // Wait a bit for the client to process it
             sleep(Duration::from_millis(10)).await;
         });
 
