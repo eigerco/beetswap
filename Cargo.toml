@@ -8,7 +8,7 @@ description = "Implementation of bitswap protocol for libp2p"
 [dependencies]
 async-trait = "0.1"
 asynchronous-codec = "0.7"
-blockstore = "0.1"
+blockstore = "0.3"
 bytes = "1"
 cid = "0.11"
 fnv = "1.0.5"
