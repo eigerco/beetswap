@@ -44,7 +44,7 @@ pub use crate::client::QueryId;
 #[derive(Debug)]
 pub struct Behaviour<const MAX_MULTIHASH_SIZE: usize, B>
 where
-    B: Blockstore + Send + Sync + 'static,
+    B: Blockstore + 'static,
 {
     protocol: StreamProtocol,
     client: ClientBehaviour<MAX_MULTIHASH_SIZE, B>,
@@ -95,7 +95,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 impl<const MAX_MULTIHASH_SIZE: usize, B> Behaviour<MAX_MULTIHASH_SIZE, B>
 where
-    B: Blockstore + Send + Sync + 'static,
+    B: Blockstore + 'static,
 {
     /// Creates a new [`Behaviour`] with the default configuration.
     pub fn new(blockstore: B) -> Behaviour<MAX_MULTIHASH_SIZE, B> {
@@ -122,7 +122,7 @@ where
 
 impl<const MAX_MULTIHASH_SIZE: usize, B> NetworkBehaviour for Behaviour<MAX_MULTIHASH_SIZE, B>
 where
-    B: Blockstore + Send + Sync + 'static,
+    B: Blockstore + 'static,
 {
     type ConnectionHandler = ConnHandler<MAX_MULTIHASH_SIZE>;
     type ToSwarm = Event;

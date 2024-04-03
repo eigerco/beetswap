@@ -63,7 +63,7 @@ enum TaskResult<const S: usize> {
 #[derive(Debug)]
 pub(crate) struct ClientBehaviour<const S: usize, B>
 where
-    B: Blockstore + Send + Sync,
+    B: Blockstore,
 {
     store: Arc<B>,
     protocol: StreamProtocol,
@@ -97,7 +97,7 @@ pub enum SendingState {
 
 impl<const S: usize, B> ClientBehaviour<S, B>
 where
-    B: Blockstore + Send + Sync + 'static,
+    B: Blockstore + 'static,
 {
     pub(crate) fn new(config: ClientConfig, store: Arc<B>, protocol_prefix: Option<&str>) -> Self {
         let protocol = stream_protocol(protocol_prefix, "/ipfs/bitswap/1.2.0")
