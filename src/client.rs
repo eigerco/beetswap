@@ -84,19 +84,49 @@ where
 
 #[derive(Debug)]
 struct PeerState<const S: usize> {
+    /// Keeps track of established connections.
+    ///
+    /// A connection is removed from this list if one of the following happens:
+    ///
+    /// * Connection closure is triggered.
+    /// * `ClientConnectionHandler` did not received the `SendWantlist` request. In other
+    ///   words the `RECEIVE_REQUEST_TIMEOUT` is triggered.
+    /// * `ClientConnectionHandler` failed to allocate a communication channel with the
+    ///   other peer. In other words the `START_SENDING_TIMEOUT` is triggered.
+    /// * The communication channel if other peer was terminated unexpectedly. For example
+    ///   when the TCP connection closed.
     established_connections: FnvHashSet<ConnectionId>,
     sending_state: SendingState,
     wantlist: WantlistState<S>,
     send_full: bool,
 }
 
+/// Sending state of the `ClientConnectionHandler`.
+///
+/// This exists in two different places:
+///
+/// * `PeerState` in `ClientBehaviour`
+/// * `ClientConnectionHandler`
+///
+/// The changes are synchronized via events. See the following on
+/// why this designed was chosen:
+///
+/// * https://github.com/eigerco/lumina/issues/257
+/// * https://github.com/eigerco/beetswap/pull/36
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[doc(hidden)]
 pub enum SendingState {
+    /// All `ClientConnectionHandler` are ready to send new messages.
+    ///
+    /// NOTE: Each peer can have multiple `ClientConnectionHandler`.
     Ready,
+    /// `ClientBehaviour` requested to send a message via `ClientConnectionHandler` with `ConnectionId`.
     Requested(Instant, ConnectionId),
+    /// `ClientConnectionHandler` with `ConnectionId` received the request.
     RequestReceived(Instant, ConnectionId),
+    /// `ClientConnectionHandler` with `ConnectionId` started sending the message.
     Sending(Instant, ConnectionId),
+    /// `ClientConnectionHandler` with `ConnectionId` failed to send the message.
     Failed(ConnectionId),
 }
 
@@ -302,7 +332,7 @@ where
 
     fn update_handlers(&mut self) -> bool {
         let mut handler_updated = false;
-        let mut to_be_removed = SmallVec::<[PeerId; 8]>::new();
+        let mut peers_with_no_connections = SmallVec::<[PeerId; 8]>::new();
 
         for (peer, state) in self.peers.iter_mut() {
             // Clear out bad connections. In case of a bad connection we
@@ -317,7 +347,8 @@ where
                         // Sending in progress
                         continue;
                     }
-                    // Bad connection
+                    // Bad connection.
+                    // `ClientConnectionHandler` didn't receive `SendWantlist` request within time.
                     state.established_connections.remove(&connection_id);
                     state.send_full = true;
                 }
@@ -326,24 +357,30 @@ where
                         // Sending in progress
                         continue;
                     }
-                    // Bad connection
+                    // Bad connection.
+                    // `ClientConnectionHandler` didn't allocate a communication channel within time.
                     state.established_connections.remove(&connection_id);
                     state.send_full = true;
-                    // TODO: Stop ongoing request
+                    // TODO: ClientConnectionHandler is currently looping to allocate a
+                    // communication channel. We should notify it stop doing this.
+                    //
+                    // Can we move this if in ClientConnectionHandler and produce
+                    // SendingState::Failed instead?
                 }
                 SendingState::Sending(..) => {
                     // Sending in progress
                     continue;
                 }
                 SendingState::Failed(connection_id) => {
-                    // Bad connection
+                    // Bad connection.
+                    // `ClientConnectionHandler` failed to send wantlist because of network issues.
                     state.established_connections.remove(&connection_id);
                     state.send_full = true;
                 }
             };
 
             let Some(connection_id) = state.established_connections.iter().next().copied() else {
-                to_be_removed.push(*peer);
+                peers_with_no_connections.push(*peer);
                 continue;
             };
 
@@ -372,7 +409,7 @@ where
             handler_updated = true;
         }
 
-        for peer in to_be_removed {
+        for peer in peers_with_no_connections {
             self.peers.remove(&peer);
         }
 
