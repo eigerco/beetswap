@@ -8,7 +8,7 @@ rust-version = "1.75"
 
 [dependencies]
 asynchronous-codec = "0.7"
-blockstore = "0.3"
+blockstore = "0.4"
 bytes = "1"
 cid = "0.11"
 fnv = "1.0.5"

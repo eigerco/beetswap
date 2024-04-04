@@ -8,9 +8,8 @@ use asynchronous_codec::FramedWrite;
 use blockstore::{Blockstore, BlockstoreError};
 use cid::CidGeneric;
 use fnv::{FnvHashMap, FnvHashSet};
-use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
-use futures::{FutureExt, SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use libp2p_core::upgrade::ReadyUpgrade;
 use libp2p_identity::PeerId;
 use libp2p_swarm::{
@@ -24,7 +23,7 @@ use crate::message::Codec;
 use crate::proto::message::{
     mod_Message::Block as ProtoBlock, mod_Message::Wantlist as ProtoWantlist, Message,
 };
-use crate::utils::stream_protocol;
+use crate::utils::{box_future, stream_protocol, BoxFuture};
 use crate::{Event, Result, StreamRequester, ToBehaviourEvent, ToHandlerEvent};
 
 type Sink = FramedWrite<libp2p_swarm::Stream, Codec>;
@@ -153,13 +152,10 @@ where
     fn schedule_store_get(&mut self, peer: Arc<PeerId>, cids: Vec<CidGeneric<S>>) {
         let store = self.store.clone();
 
-        self.tasks.push(
-            async move {
-                let result = get_multiple_cids_from_store(store, cids).await;
-                TaskResult::Get(peer, result)
-            }
-            .boxed(),
-        );
+        self.tasks.push(box_future(async move {
+            let result = get_multiple_cids_from_store(store, cids).await;
+            TaskResult::Get(peer, result)
+        }));
     }
 
     fn cancel_request(&mut self, peer: Arc<PeerId>, cid: CidGeneric<S>) {
