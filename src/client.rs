@@ -11,7 +11,6 @@ use cid::CidGeneric;
 use fnv::{FnvHashMap, FnvHashSet};
 use futures::future::{AbortHandle, Abortable};
 use futures::stream::FuturesUnordered;
-use futures::task::AtomicWaker;
 use futures::{FutureExt, SinkExt, StreamExt};
 use futures_timer::Delay;
 use instant::Instant;
@@ -77,7 +76,6 @@ where
     tasks: FuturesUnordered<BoxFuture<'static, TaskResult<S>>>,
     query_abort_handle: FnvHashMap<QueryId, AbortHandle>,
     next_query_id: u64,
-    waker: Arc<AtomicWaker>,
     send_full_timer: Delay,
     new_blocks: Vec<(CidGeneric<S>, Vec<u8>)>,
 }
@@ -149,7 +147,6 @@ where
             tasks: FuturesUnordered::new(),
             query_abort_handle: FnvHashMap::default(),
             next_query_id: 0,
-            waker: Arc::new(AtomicWaker::new()),
             send_full_timer: Delay::new(SEND_FULL_INTERVAL),
             new_blocks: Vec::new(),
         }
@@ -326,7 +323,7 @@ where
 
     fn update_handlers(&mut self) -> bool {
         let mut handler_updated = false;
-        let mut peers_with_no_connections = SmallVec::<[PeerId; 8]>::new();
+        let mut peers_without_connection = SmallVec::<[PeerId; 8]>::new();
 
         for (peer, state) in self.peers.iter_mut() {
             // Clear out bad connections. In case of a bad connection we
@@ -374,7 +371,7 @@ where
             };
 
             let Some(connection_id) = state.established_connections.iter().next().copied() else {
-                peers_with_no_connections.push(*peer);
+                peers_without_connection.push(*peer);
                 continue;
             };
 
@@ -403,7 +400,8 @@ where
             handler_updated = true;
         }
 
-        for peer in peers_with_no_connections {
+        // Remove dead peers
+        for peer in peers_without_connection {
             self.peers.remove(&peer);
         }
 
@@ -411,10 +409,8 @@ where
         handler_updated
     }
 
+    /// This is polled by `Behaviour`, which is polled by `Swarm`.
     pub(crate) fn poll(&mut self, cx: &mut Context) -> Poll<ToSwarm<Event, ToHandlerEvent>> {
-        // Update waker
-        self.waker.register(cx.waker());
-
         loop {
             if let Some(ev) = self.queue.pop_front() {
                 return Poll::Ready(ev);
@@ -514,6 +510,7 @@ impl<const S: usize> ClientConnectionHandler<S> {
         self.sink_state = SinkState::None;
     }
 
+    /// Initiate seding of wantlist to peer.
     pub(crate) fn send_wantlist(&mut self, wantlist: ProtoWantlist) {
         debug_assert!(self.msg.is_none());
         debug_assert!(matches!(self.sending_state, SendingState::Ready));
@@ -529,6 +526,7 @@ impl<const S: usize> ClientConnectionHandler<S> {
         ));
     }
 
+    /// Changes sending state if needed and informs `ClientBehaviour` about it.
     fn change_sending_state(&mut self, state: SendingState) {
         if self.sending_state != state {
             self.sending_state = state;
@@ -552,6 +550,12 @@ impl<const S: usize> ClientConnectionHandler<S> {
         })
     }
 
+    /// This is polled when the `ConnectionHandler` task initiates the closing of the connection.
+    ///
+    /// This method needs to return all the remaining events that are going to be send to behaviour
+    /// and it is polled in a stream-like fashion until `Poll::Ready(None)` is returned.
+    ///
+    /// When reaching this point, `poll` method will never be called again.
     pub(crate) fn poll_close(&mut self, cx: &mut Context) -> Poll<Option<ToBehaviourEvent<S>>> {
         if !self.closing {
             self.closing = true;
@@ -559,6 +563,7 @@ impl<const S: usize> ClientConnectionHandler<S> {
 
             if let SinkState::Ready(mut sink) = mem::replace(&mut self.sink_state, SinkState::None)
             {
+                // Close sink but don't await for it.
                 let _ = sink.poll_close_unpin(cx);
             }
 
@@ -586,6 +591,7 @@ impl<const S: usize> ClientConnectionHandler<S> {
         self.sink_state = SinkState::None;
     }
 
+    /// Each connection has its own dedicated task, which polls this method.
     pub(crate) fn poll(&mut self, cx: &mut Context) -> Poll<ConnHandlerEvent<S>> {
         loop {
             if let Some(ev) = self.queue.pop_front() {
