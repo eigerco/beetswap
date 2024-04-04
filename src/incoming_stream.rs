@@ -6,8 +6,8 @@ use std::task::{Context, Poll};
 use asynchronous_codec::FramedRead;
 use cid::CidGeneric;
 use fnv::FnvHashMap;
-use futures::future::{BoxFuture, Fuse, FusedFuture};
-use futures::{FutureExt, StreamExt};
+use futures_util::future::{BoxFuture, Fuse, FusedFuture, FutureExt};
+use futures_util::stream::StreamExt;
 use tracing::error;
 
 use crate::cid_prefix::CidPrefix;
@@ -60,7 +60,7 @@ impl<const S: usize> fmt::Debug for IncomingStream<S> {
     }
 }
 
-impl<const S: usize> futures::Stream for IncomingStream<S> {
+impl<const S: usize> futures_core::stream::Stream for IncomingStream<S> {
     type Item = IncomingMessage<S>;
 
     fn poll_next(

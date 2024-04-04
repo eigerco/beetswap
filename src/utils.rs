@@ -3,7 +3,7 @@
 use std::future::Future;
 
 use cid::CidGeneric;
-use futures::FutureExt;
+use futures_util::future::FutureExt;
 use libp2p_core::multihash::Multihash;
 use libp2p_swarm::StreamProtocol;
 
@@ -33,7 +33,7 @@ pub(crate) fn stream_protocol(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) type BoxFuture<'a, T> = futures::future::BoxFuture<'a, T>;
+pub(crate) type BoxFuture<'a, T> = futures_core::future::BoxFuture<'a, T>;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn box_future<'a, F, T>(f: F) -> BoxFuture<'a, T>
@@ -44,7 +44,7 @@ where
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) type BoxFuture<'a, T> = futures::future::LocalBoxFuture<'a, T>;
+pub(crate) type BoxFuture<'a, T> = futures_core::future::LocalBoxFuture<'a, T>;
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn box_future<'a, F, T>(f: F) -> BoxFuture<'a, T>

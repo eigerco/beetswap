@@ -8,8 +8,8 @@ use asynchronous_codec::FramedWrite;
 use blockstore::{Blockstore, BlockstoreError};
 use cid::CidGeneric;
 use fnv::{FnvHashMap, FnvHashSet};
-use futures::stream::FuturesUnordered;
-use futures::{SinkExt, StreamExt};
+use futures_util::sink::SinkExt;
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use libp2p_core::upgrade::ReadyUpgrade;
 use libp2p_identity::PeerId;
 use libp2p_swarm::{

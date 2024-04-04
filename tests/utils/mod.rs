@@ -1,13 +1,13 @@
+use std::future::Future;
+
 use beetswap::{Error, Event, QueryId};
 use blockstore::InMemoryBlockstore;
 use cid::CidGeneric;
 use fnv::FnvHashMap;
-use futures::future::{Future, FutureExt};
-use libp2p::{
-    futures::StreamExt,
-    swarm::{DialError, SwarmEvent},
-    tcp, Multiaddr, PeerId, Swarm, SwarmBuilder,
-};
+use futures_util::future::FutureExt;
+use futures_util::stream::StreamExt;
+use libp2p::swarm::{DialError, SwarmEvent};
+use libp2p::{tcp, Multiaddr, PeerId, Swarm, SwarmBuilder};
 use multihash_codetable::{Code, MultihashDigest};
 use tokio::select;
 use tokio::sync::{mpsc, oneshot};

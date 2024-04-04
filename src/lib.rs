@@ -7,7 +7,7 @@ use std::task::{ready, Context, Poll};
 use blockstore::{Blockstore, BlockstoreError};
 use cid::CidGeneric;
 use client::SendingState;
-use futures::{stream::SelectAll, StreamExt};
+use futures_util::stream::{SelectAll, StreamExt};
 use incoming_stream::IncomingMessage;
 use libp2p_core::{multiaddr::Multiaddr, upgrade::ReadyUpgrade, Endpoint};
 use libp2p_identity::PeerId;

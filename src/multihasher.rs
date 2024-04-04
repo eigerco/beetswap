@@ -13,7 +13,7 @@ use std::fmt::{self, Display};
 use std::future::Future;
 use std::pin::Pin;
 
-use futures::FutureExt;
+use futures_util::future::FutureExt;
 use libp2p_core::multihash::Multihash;
 use multihash_codetable::MultihashDigest;
 
