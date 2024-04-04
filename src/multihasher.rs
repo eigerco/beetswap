@@ -10,8 +10,10 @@
 
 use std::collections::VecDeque;
 use std::fmt::{self, Display};
+use std::future::Future;
+use std::pin::Pin;
 
-use async_trait::async_trait;
+use futures::FutureExt;
 use libp2p_core::multihash::Multihash;
 use multihash_codetable::MultihashDigest;
 
@@ -63,7 +65,6 @@ impl MultihasherError {
 }
 
 /// Trait for producing a custom [`Multihash`].
-#[async_trait]
 pub trait Multihasher<const S: usize> {
     /// Hash the `input` based on the `multihash_code`.
     ///
@@ -73,17 +74,38 @@ pub trait Multihasher<const S: usize> {
     /// [`BehaviourBuilder::register_multihasher`].
     ///
     /// [`BehaviourBuilder::register_multihasher`]: crate::BehaviourBuilder::register_multihasher
-    async fn hash(
+    fn hash(
         &self,
         multihash_code: u64,
         input: &[u8],
-    ) -> Result<Multihash<S>, MultihasherError>;
+    ) -> impl Future<Output = Result<Multihash<S>, MultihasherError>> + Send;
+}
+
+/// Workaround for having dynamic dispatch for `Multihasher` internally.
+trait DispatchableMultihasher<const S: usize> {
+    fn hash<'a>(
+        &'a self,
+        multihash_code: u64,
+        input: &'a [u8],
+    ) -> Pin<Box<dyn Future<Output = Result<Multihash<S>, MultihasherError>> + Send + 'a>>;
+}
+
+impl<const S: usize, T> DispatchableMultihasher<S> for T
+where
+    T: Multihasher<S>,
+{
+    fn hash<'a>(
+        &'a self,
+        multihash_code: u64,
+        input: &'a [u8],
+    ) -> Pin<Box<dyn Future<Output = Result<Multihash<S>, MultihasherError>> + Send + 'a>> {
+        Multihasher::<S>::hash(self, multihash_code, input).boxed()
+    }
 }
 
 /// [`Multihasher`] that uses [`multihash_codetable::Code`]
 pub struct StandardMultihasher;
 
-#[async_trait]
 impl<const S: usize> Multihasher<S> for StandardMultihasher {
     async fn hash(
         &self,
@@ -100,7 +122,7 @@ impl<const S: usize> Multihasher<S> for StandardMultihasher {
 }
 
 pub(crate) struct MultihasherTable<const S: usize> {
-    multihashers: VecDeque<Box<dyn Multihasher<S> + Send + Sync + 'static>>,
+    multihashers: VecDeque<Box<dyn DispatchableMultihasher<S> + Send + Sync + 'static>>,
 }
 
 impl<const S: usize> fmt::Debug for MultihasherTable<S> {
