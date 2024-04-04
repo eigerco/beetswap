@@ -552,8 +552,9 @@ impl<const S: usize> ClientConnectionHandler<S> {
 
     /// This is polled when the `ConnectionHandler` task initiates the closing of the connection.
     ///
-    /// This method needs to return all the remaining events that are going to be send to behaviour
-    /// and it is polled in a stream-like fashion until `Poll::Ready(None)` is returned.
+    /// This method needs to return all the remaining events that are going to be send to
+    /// behaviour. It is polled in a stream-like fashion and stops when `Poll::Ready(None)`
+    /// is returned.
     ///
     /// When reaching this point, `poll` method will never be called again.
     pub(crate) fn poll_close(&mut self, cx: &mut Context) -> Poll<Option<ToBehaviourEvent<S>>> {
