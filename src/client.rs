@@ -175,6 +175,8 @@ where
             sink_state: SinkState::None,
             sending_state: SendingState::Ready,
             closing: false,
+            halted: false,
+            start_sending_timeout: None,
         }
     }
 
@@ -342,21 +344,11 @@ where
                     // `ClientConnectionHandler` didn't receive `SendWantlist` request within time.
                     state.established_connections.remove(&connection_id);
                     state.send_full = true;
+                    state.sending_state = SendingState::Ready;
                 }
-                SendingState::RequestReceived(instant, connection_id) => {
-                    if instant.elapsed() < START_SENDING_TIMEOUT {
-                        // Sending in progress
-                        continue;
-                    }
-                    // Bad connection.
-                    // `ClientConnectionHandler` didn't allocate a communication channel within time.
-                    state.established_connections.remove(&connection_id);
-                    state.send_full = true;
-                    // TODO: ClientConnectionHandler is currently looping to allocate a
-                    // communication channel. We should notify it stop doing this.
-                    //
-                    // Can we move this if in ClientConnectionHandler and produce
-                    // SendingState::Failed instead?
+                SendingState::RequestReceived(..) => {
+                    // Stream allocation in progress
+                    continue;
                 }
                 SendingState::Sending(..) => {
                     // Sending in progress
@@ -367,6 +359,7 @@ where
                     // `ClientConnectionHandler` failed to send wantlist because of network issues.
                     state.established_connections.remove(&connection_id);
                     state.send_full = true;
+                    state.sending_state = SendingState::Ready;
                 }
             };
 
@@ -490,6 +483,8 @@ pub(crate) struct ClientConnectionHandler<const S: usize> {
     sink_state: SinkState,
     sending_state: SendingState,
     closing: bool,
+    halted: bool,
+    start_sending_timeout: Option<Delay>,
 }
 
 enum SinkState {
@@ -500,18 +495,30 @@ enum SinkState {
 
 impl<const S: usize> ClientConnectionHandler<S> {
     pub(crate) fn set_stream(&mut self, stream: libp2p_swarm::Stream) {
+        if self.halted {
+            return;
+        }
+
         // Convert `AsyncWrite` stream to `Sink`
         self.sink_state = SinkState::Ready(FramedWrite::new(stream, Codec));
     }
 
     pub(crate) fn stream_allocation_failed(&mut self) {
+        if self.halted {
+            return;
+        }
+
         debug_assert!(matches!(self.sink_state, SinkState::Requested));
-        // Reset state to force a new allocation in `poll`
+        // Reset state to force a new allocation in `poll`.
         self.sink_state = SinkState::None;
     }
 
     /// Initiate seding of wantlist to peer.
     pub(crate) fn send_wantlist(&mut self, wantlist: ProtoWantlist) {
+        if self.halted {
+            return;
+        }
+
         debug_assert!(self.msg.is_none());
         debug_assert!(matches!(self.sending_state, SendingState::Ready));
 
@@ -524,6 +531,11 @@ impl<const S: usize> ClientConnectionHandler<S> {
             Instant::now(),
             self.connection_id,
         ));
+
+        // Before reaching the `Sending` state, a stream allocation must happen.
+        // This can take time or multiple retries. We specify how much time we
+        // are willing to wait until `Sending` is reached.
+        self.start_sending_timeout = Some(Delay::new(START_SENDING_TIMEOUT));
     }
 
     /// Changes sending state if needed and informs `ClientBehaviour` about it.
@@ -548,6 +560,11 @@ impl<const S: usize> ClientConnectionHandler<S> {
                 StreamRequester::Client,
             ),
         })
+    }
+
+    fn close_sink_on_error(&mut self, location: &str) {
+        warn!("sink operation failed, closing: {location}");
+        self.sink_state = SinkState::None;
     }
 
     /// This is polled when the `ConnectionHandler` task initiates the closing of the connection.
@@ -587,16 +604,28 @@ impl<const S: usize> ClientConnectionHandler<S> {
         Poll::Ready(self.queue.pop_front())
     }
 
-    fn close_sink_on_error(&mut self, location: &str) {
-        warn!("sink operation failed, closing: {location}");
-        self.sink_state = SinkState::None;
-    }
-
     /// Each connection has its own dedicated task, which polls this method.
     pub(crate) fn poll(&mut self, cx: &mut Context) -> Poll<ConnHandlerEvent<S>> {
         loop {
             if let Some(ev) = self.queue.pop_front() {
                 return Poll::Ready(ConnectionHandlerEvent::NotifyBehaviour(ev));
+            }
+
+            if self.halted {
+                return Poll::Pending;
+            }
+
+            if let Some(delay) = &mut self.start_sending_timeout {
+                // If we never reached the `Sending` state within the specified
+                // time, we abort and halt this connection.
+                if delay.poll_unpin(cx).is_ready() {
+                    self.start_sending_timeout.take();
+                    self.msg.take();
+                    self.close_sink_on_error("start_sending_timeout");
+                    self.change_sending_state(SendingState::Failed(self.connection_id));
+                    self.halted = true;
+                    continue;
+                }
             }
 
             match (&mut self.msg, &mut self.sink_state) {
@@ -627,6 +656,9 @@ impl<const S: usize> ClientConnectionHandler<S> {
                         self.close_sink_on_error("start_send_unpin");
                         continue;
                     }
+
+                    // Stop the timer because sending started
+                    self.start_sending_timeout = None;
 
                     self.change_sending_state(SendingState::Sending(
                         Instant::now(),
