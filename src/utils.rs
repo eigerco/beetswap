@@ -1,6 +1,9 @@
 //! Helpers used in and provided by the crate
 
+use std::future::Future;
+
 use cid::CidGeneric;
+use futures::FutureExt;
 use libp2p_core::multihash::Multihash;
 use libp2p_swarm::StreamProtocol;
 
@@ -27,6 +30,28 @@ pub(crate) fn stream_protocol(
         Some(prefix) => StreamProtocol::try_from_owned(format!("{prefix}{protocol}")).ok(),
         None => Some(StreamProtocol::new(protocol)),
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) type BoxFuture<'a, T> = futures::future::BoxFuture<'a, T>;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn box_future<'a, F, T>(f: F) -> BoxFuture<'a, T>
+where
+    F: Future<Output = T> + Send + 'a,
+{
+    f.boxed()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) type BoxFuture<'a, T> = futures::future::LocalBoxFuture<'a, T>;
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn box_future<'a, F, T>(f: F) -> BoxFuture<'a, T>
+where
+    F: Future<Output = T> + Sized + 'a,
+{
+    f.boxed_local()
 }
 
 #[cfg(test)]
