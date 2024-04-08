@@ -1,8 +1,8 @@
 #![cfg_attr(docs_rs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
+use std::sync::Arc;
+use std::task::{ready, Context, Poll};
 
 use blockstore::{Blockstore, BlockstoreError};
 use cid::CidGeneric;
@@ -47,7 +47,7 @@ where
     B: Blockstore + 'static,
 {
     protocol: StreamProtocol,
-    client: ClientBehaviour<MAX_MULTIHASH_SIZE, B>,
+    pub(crate) client: ClientBehaviour<MAX_MULTIHASH_SIZE, B>,
     server: ServerBehaviour<MAX_MULTIHASH_SIZE, B>,
     multihasher: Arc<MultihasherTable<MAX_MULTIHASH_SIZE>>,
 }
@@ -129,7 +129,7 @@ where
 
     fn handle_established_inbound_connection(
         &mut self,
-        _connection_id: ConnectionId,
+        connection_id: ConnectionId,
         peer: PeerId,
         _local_addr: &Multiaddr,
         _remote_addr: &Multiaddr,
@@ -137,7 +137,7 @@ where
         Ok(ConnHandler {
             peer,
             protocol: self.protocol.clone(),
-            client_handler: self.client.new_connection_handler(peer),
+            client_handler: self.client.new_connection_handler(peer, connection_id),
             server_handler: self.server.new_connection_handler(peer),
             incoming_streams: SelectAll::new(),
             multihasher: self.multihasher.clone(),
@@ -146,7 +146,7 @@ where
 
     fn handle_established_outbound_connection(
         &mut self,
-        _connection_id: ConnectionId,
+        connection_id: ConnectionId,
         peer: PeerId,
         _addr: &Multiaddr,
         _role_override: Endpoint,
@@ -154,7 +154,7 @@ where
         Ok(ConnHandler {
             peer,
             protocol: self.protocol.clone(),
-            client_handler: self.client.new_connection_handler(peer),
+            client_handler: self.client.new_connection_handler(peer, connection_id),
             server_handler: self.server.new_connection_handler(peer),
             incoming_streams: SelectAll::new(),
             multihasher: self.multihasher.clone(),
@@ -164,8 +164,12 @@ where
     fn on_swarm_event(&mut self, event: FromSwarm) {
         #[allow(clippy::single_match)]
         match event {
-            FromSwarm::ConnectionClosed(ConnectionClosed { peer_id, .. }) => {
-                self.client.on_connection_closed(peer_id);
+            FromSwarm::ConnectionClosed(ConnectionClosed {
+                peer_id,
+                connection_id,
+                ..
+            }) => {
+                self.client.on_connection_closed(peer_id, connection_id);
             }
             _ => {}
         }
@@ -190,6 +194,12 @@ where
             ToBehaviourEvent::NewBlocksAvailable(blocks) => {
                 trace!("received new blocks: {}", blocks.len());
                 self.server.new_blocks_available(blocks);
+            }
+            ToBehaviourEvent::SendingStateChanged(peer_id, state) => {
+                self.client.sending_state_changed(peer_id, state);
+            }
+            ToBehaviourEvent::ClientClosingConnection(peer_id, connection_id) => {
+                self.client.on_connection_closed(peer_id, connection_id);
             }
         }
     }
@@ -222,12 +232,14 @@ where
 pub enum ToBehaviourEvent<const S: usize> {
     IncomingMessage(PeerId, IncomingMessage<S>),
     NewBlocksAvailable(Vec<(CidGeneric<S>, Vec<u8>)>),
+    SendingStateChanged(PeerId, SendingState),
+    ClientClosingConnection(PeerId, ConnectionId),
 }
 
 #[derive(Debug)]
 #[doc(hidden)]
 pub enum ToHandlerEvent {
-    SendWantlist(ProtoWantlist, Arc<Mutex<SendingState>>),
+    SendWantlist(ProtoWantlist),
     QueueOutgoingMessages(Vec<(Vec<u8>, Vec<u8>)>),
 }
 
@@ -248,6 +260,9 @@ pub struct ConnHandler<const MAX_MULTIHASH_SIZE: usize> {
     multihasher: Arc<MultihasherTable<MAX_MULTIHASH_SIZE>>,
 }
 
+pub(crate) type ConnHandlerEvent<const S: usize> =
+    ConnectionHandlerEvent<ReadyUpgrade<StreamProtocol>, StreamRequester, ToBehaviourEvent<S>>;
+
 impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler for ConnHandler<MAX_MULTIHASH_SIZE> {
     type ToBehaviour = ToBehaviourEvent<MAX_MULTIHASH_SIZE>;
     type FromBehaviour = ToHandlerEvent;
@@ -262,8 +277,8 @@ impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler for ConnHandler<MAX_MULT
 
     fn on_behaviour_event(&mut self, event: Self::FromBehaviour) {
         match event {
-            ToHandlerEvent::SendWantlist(wantlist, state) => {
-                self.client_handler.send_wantlist(wantlist, state);
+            ToHandlerEvent::SendWantlist(wantlist) => {
+                self.client_handler.send_wantlist(wantlist);
             }
             ToHandlerEvent::QueueOutgoingMessages(data) => {
                 self.server_handler.queue_messages(data);
@@ -286,6 +301,12 @@ impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler for ConnHandler<MAX_MULT
                 StreamRequester::Client => self.client_handler.set_stream(outbound.protocol),
                 StreamRequester::Server => self.server_handler.set_stream(outbound.protocol),
             },
+            ConnectionEvent::DialUpgradeError(outbound) => match outbound.info {
+                StreamRequester::Client => self.client_handler.stream_allocation_failed(),
+                StreamRequester::Server => {
+                    // TODO
+                }
+            },
             ConnectionEvent::FullyNegotiatedInbound(ev) => {
                 let stream = IncomingStream::new(ev.protocol, self.multihasher.clone());
                 self.incoming_streams.push(stream);
@@ -295,20 +316,18 @@ impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler for ConnHandler<MAX_MULT
     }
 
     fn connection_keep_alive(&self) -> bool {
-        // TODO
-        true
+        !self.client_handler.halted()
     }
 
-    fn poll_close(&mut self, _cx: &mut Context) -> Poll<Option<Self::ToBehaviour>> {
+    fn poll_close(&mut self, cx: &mut Context) -> Poll<Option<Self::ToBehaviour>> {
+        if let Some(ev) = ready!(self.client_handler.poll_close(cx)) {
+            return Poll::Ready(Some(ev));
+        }
+
         Poll::Ready(None)
     }
 
-    fn poll(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<
-        ConnectionHandlerEvent<Self::OutboundProtocol, Self::OutboundOpenInfo, Self::ToBehaviour>,
-    > {
+    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<ConnHandlerEvent<MAX_MULTIHASH_SIZE>> {
         if let Poll::Ready(Some(msg)) = self.incoming_streams.poll_next_unpin(cx) {
             return Poll::Ready(ConnectionHandlerEvent::NotifyBehaviour(
                 ToBehaviourEvent::IncomingMessage(self.peer, msg),

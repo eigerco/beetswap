@@ -14,6 +14,7 @@ cid = "0.11"
 fnv = "1.0.5"
 futures = "0.3"
 futures-timer = "3"
+instant = "0.1.12"
 libp2p-core = "0.41"
 libp2p-identity = "0.2"
 libp2p-swarm = "0.44"
@@ -31,7 +32,10 @@ clap = { version = "4.4", features = ["derive"] }
 hex = "0.4"
 libp2p = { version = "0.53", features = ["tokio", "tcp", "identify", "macros"] }
 libp2p-noise = "0.44"
+libp2p-stream = "0.1.0-alpha"
+libp2p-swarm-test = "0.3.0"
 libp2p-yamux = "0.45"
+log = "0.4.18" # needed for minimal-versions
 multihash = "0.19"
 multihash-codetable = { version = "0.1", features = ["digest", "sha2"] }
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
@@ -39,7 +43,7 @@ tracing-appender = "0.2.2"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
 
 [features]
-wasm-bindgen = ["futures-timer/wasm-bindgen"]
+wasm-bindgen = ["futures-timer/wasm-bindgen", "instant/wasm-bindgen"]
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--cfg", "docs_rs"]
