@@ -371,6 +371,9 @@ where
             let wantlist = if state.send_full {
                 state.wantlist.generate_proto_full(&self.wantlist)
             } else {
+                // NOTE: `generate_proto_update` alters the internal state of `WantlistState`
+                // each time it is called. So after calling it, any error should be recovered
+                // with `send_full`, even if the error happens before any byte leaves the wire.
                 state.wantlist.generate_proto_update(&self.wantlist)
             };
 
@@ -637,12 +640,15 @@ impl<const S: usize> ClientConnectionHandler<S> {
                 (Some(_), SinkState::None) => return self.open_new_substream(),
                 (_, SinkState::Requested) => return Poll::Pending,
                 (None, SinkState::Ready(sink)) => {
+                    // When `poll_flush` returns `Ok`, it means the sending just finished.
+                    // When `poll_flush` returns `Err`, it means the sending just failed.
                     if ready!(sink.poll_flush_unpin(cx)).is_err() {
                         self.close_sink_on_error("poll_flush_unpin");
                         self.change_sending_state(SendingState::Failed(self.connection_id));
                         continue;
                     }
 
+                    // Sending finished and we have nothing else to send, so close the stream.
                     let _ = sink.poll_close_unpin(cx);
                     self.sink_state = SinkState::None;
                     self.change_sending_state(SendingState::Ready);
