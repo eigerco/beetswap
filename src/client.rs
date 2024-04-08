@@ -91,8 +91,8 @@ struct PeerState<const S: usize> {
     ///   words the `RECEIVE_REQUEST_TIMEOUT` is triggered.
     /// * `ClientConnectionHandler` failed to allocate a communication channel with the
     ///   other peer. In other words the `START_SENDING_TIMEOUT` is triggered.
-    /// * The communication channel if other peer was terminated unexpectedly. For example
-    ///   when the TCP connection closed.
+    /// * Communication channel with the peer was closed unexpectedly. This can happen for example when 
+    /// the TCP conection is closed.
     established_connections: FnvHashSet<ConnectionId>,
     sending_state: SendingState,
     wantlist: WantlistState<S>,
