@@ -545,7 +545,7 @@ impl<const S: usize> ClientConnectionHandler<S> {
         self.start_sending_timeout = Some(Delay::new(START_SENDING_TIMEOUT));
     }
 
-    /// Changes sending state if needed and informs `ClientBehaviour` about it.
+    /// Changes sending state if needed and informs `ClientBehaviour` if there is a change.
     fn change_sending_state(&mut self, state: SendingState) {
         if self.sending_state != state {
             self.sending_state = state;
