@@ -316,8 +316,7 @@ impl<const MAX_MULTIHASH_SIZE: usize> ConnectionHandler for ConnHandler<MAX_MULT
     }
 
     fn connection_keep_alive(&self) -> bool {
-        // TODO
-        true
+        !self.client_handler.halted()
     }
 
     fn poll_close(&mut self, cx: &mut Context) -> Poll<Option<Self::ToBehaviour>> {

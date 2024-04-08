@@ -494,6 +494,10 @@ enum SinkState {
 }
 
 impl<const S: usize> ClientConnectionHandler<S> {
+    pub(crate) fn halted(&self) -> bool {
+        self.halted
+    }
+
     pub(crate) fn set_stream(&mut self, stream: libp2p_swarm::Stream) {
         if self.halted {
             return;
