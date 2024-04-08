@@ -341,7 +341,7 @@ where
                         continue;
                     }
                     // Bad connection.
-                    // `ClientConnectionHandler` didn't receive `SendWantlist` request within time.
+                    // `ClientConnectionHandler` didn't receive `SendWantlist` request before timeout.
                     state.established_connections.remove(&connection_id);
                     state.send_full = true;
                     state.sending_state = SendingState::Ready;
