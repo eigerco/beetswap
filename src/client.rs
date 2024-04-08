@@ -623,7 +623,7 @@ impl<const S: usize> ClientConnectionHandler<S> {
             }
 
             if let Some(delay) = &mut self.start_sending_timeout {
-                // If we never reached the `Sending` state within the specified
+                // If we have never reached the `Sending` state within the specified
                 // time, we abort and halt this connection.
                 if delay.poll_unpin(cx).is_ready() {
                     self.start_sending_timeout.take();
