@@ -540,7 +540,7 @@ impl<const S: usize> ClientConnectionHandler<S> {
         ));
 
         // Before reaching the `Sending` state, a stream allocation must happen.
-        // This can take time or multiple retries. We specify how much time we
+        // This can take time or require multiple retries. We specify how much time we
         // are willing to wait until `Sending` is reached.
         self.start_sending_timeout = Some(Delay::new(START_SENDING_TIMEOUT));
     }
