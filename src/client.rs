@@ -87,7 +87,7 @@ struct PeerState<const S: usize> {
     /// A connection is removed from this list if one of the following happens:
     ///
     /// * Connection closure is triggered.
-    /// * `ClientConnectionHandler` did not received the `SendWantlist` request. In other
+    /// * `ClientConnectionHandler` did not receive the `SendWantlist` request. In other
     ///   words the `RECEIVE_REQUEST_TIMEOUT` is triggered.
     /// * `ClientConnectionHandler` failed to allocate a communication channel with the
     ///   other peer. In other words the `START_SENDING_TIMEOUT` is triggered.
