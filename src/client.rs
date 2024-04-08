@@ -588,7 +588,7 @@ impl<const S: usize> ClientConnectionHandler<S> {
 
             if let SinkState::Ready(mut sink) = mem::replace(&mut self.sink_state, SinkState::None)
             {
-                // Close sink but don't await for it.
+                // Close the sink but don't await for it.
                 let _ = sink.poll_close_unpin(cx);
             }
 
