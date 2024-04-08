@@ -648,7 +648,7 @@ impl<const S: usize> ClientConnectionHandler<S> {
                         continue;
                     }
 
-                    // Sending finished and we have nothing else to send, so close the stream.
+                    // Sending finished and we have nothing else to send, so we close the stream.
                     let _ = sink.poll_close_unpin(cx);
                     self.sink_state = SinkState::None;
                     self.change_sending_state(SendingState::Ready);
