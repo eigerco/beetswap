@@ -520,7 +520,7 @@ impl<const S: usize> ClientConnectionHandler<S> {
         self.sink_state = SinkState::None;
     }
 
-    /// Initiate seding of wantlist to peer.
+    /// Initiate sending of a wantlist to the peer.
     pub(crate) fn send_wantlist(&mut self, wantlist: ProtoWantlist) {
         if self.halted {
             return;
