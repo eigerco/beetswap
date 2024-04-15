@@ -1,5 +1,6 @@
 use blockstore::{Blockstore, InMemoryBlockstore};
-use futures::{future::FutureExt, poll};
+use futures_util::future::FutureExt;
+use futures_util::poll;
 use tokio::time::{sleep, Duration};
 
 use crate::utils::{cid, spawn_node};
