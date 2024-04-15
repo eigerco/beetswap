@@ -4,11 +4,24 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Implementation of bitswap protocol for libp2p"
+authors = ["Eiger <hello@eiger.co>"]
+homepage = "https://www.eiger.co"
+readme = "README.md"
 rust-version = "1.75"
+repository = "https://github.com/eigerco/beetswap"
+# crates.io is limited to 5 keywords and 5 categories
+keywords = ["bitswap", "blockstore", "ipld", "cid"]
+# Must be one of <https://crates.io/category_slugs>
+categories = [
+  "asynchronous",
+  "cryptography::cryptocurrencies",
+  "network-programming",
+  "wasm",
+]
 
 [dependencies]
 asynchronous-codec = "0.7"
-blockstore = "0.4"
+blockstore = "0.5"
 bytes = "1"
 cid = "0.11"
 fnv = "1.0.5"
@@ -36,12 +49,14 @@ libp2p-noise = "0.44"
 libp2p-stream = "0.1.0-alpha"
 libp2p-swarm-test = "0.3.0"
 libp2p-yamux = "0.45"
-log = "0.4.18" # needed for minimal-versions
 multihash = "0.19"
 multihash-codetable = { version = "0.1", features = ["digest", "sha2"] }
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
 tracing-appender = "0.2.2"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+
+# needed for minimal-versions
+log = "0.4.18"
 
 [features]
 wasm-bindgen = ["futures-timer/wasm-bindgen", "instant/wasm-bindgen"]

@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::task::{ready, Context, Poll};
 
-use blockstore::{Blockstore, BlockstoreError};
+use blockstore::Blockstore;
 use cid::CidGeneric;
 use client::SendingState;
 use futures_util::stream::{SelectAll, StreamExt};
@@ -85,7 +85,7 @@ pub enum Error {
 
     /// Error received when interacting with blockstore
     #[error("Blockstore error: {0}")]
-    Blockstore(#[from] BlockstoreError),
+    Blockstore(#[from] blockstore::Error),
 }
 
 /// Alias for a [`Result`] with the error type [`beetswap::Error`].

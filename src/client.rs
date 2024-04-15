@@ -6,7 +6,7 @@ use std::time::Duration;
 use std::{fmt, mem};
 
 use asynchronous_codec::FramedWrite;
-use blockstore::{Blockstore, BlockstoreError};
+use blockstore::Blockstore;
 use cid::CidGeneric;
 use fnv::{FnvHashMap, FnvHashSet};
 use futures_timer::Delay;
@@ -56,9 +56,9 @@ enum TaskResult<const S: usize> {
     Get(
         QueryId,
         CidGeneric<S>,
-        Result<Option<Vec<u8>>, BlockstoreError>,
+        Result<Option<Vec<u8>>, blockstore::Error>,
     ),
-    Set(Result<Vec<(CidGeneric<S>, Vec<u8>)>, BlockstoreError>),
+    Set(Result<Vec<(CidGeneric<S>, Vec<u8>)>, blockstore::Error>),
     Cancelled,
 }
 
