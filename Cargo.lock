@@ -601,9 +601,9 @@ dependencies = [
 
 [[package]]
 name = "blockstore"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4bf477ceba49f5eae2be7e54fe2cae4406a6f90921b21f4bb1a779b4f517649"
+checksum = "358358b19add120a5afc3dd1c8e9161d6d06c44dfec2ef8da58b7fe5c369c90d"
 dependencies = [
  "cid",
  "dashmap",

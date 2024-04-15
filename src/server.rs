@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::task::{ready, Context, Poll};
 
 use asynchronous_codec::FramedWrite;
-use blockstore::{Blockstore, BlockstoreError};
+use blockstore::Blockstore;
 use cid::CidGeneric;
 use fnv::{FnvHashMap, FnvHashSet};
 use futures_util::sink::SinkExt;
@@ -58,7 +58,7 @@ enum TaskResult<const S: usize> {
 
 struct GetCidResult<const S: usize> {
     cid: CidGeneric<S>,
-    data: Result<Option<Vec<u8>>, BlockstoreError>,
+    data: Result<Option<Vec<u8>>, blockstore::Error>,
 }
 
 #[derive(Debug, Default)]
