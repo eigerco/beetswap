@@ -62,4 +62,4 @@ log = "0.4.18"
 wasm-bindgen = ["futures-timer/wasm-bindgen", "instant/wasm-bindgen"]
 
 [package.metadata.docs.rs]
-rustdoc-args = ["--cfg", "docs_rs"]
+rustdoc-args = ["--cfg", "docsrs"]
