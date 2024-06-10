@@ -1,5 +1,5 @@
 use cid::{CidGeneric, Version};
-use tracing::error;
+use tracing::debug;
 
 use crate::multihasher::{MultihasherError, MultihasherTable};
 
@@ -89,8 +89,8 @@ impl CidPrefix {
         data: &[u8],
     ) -> Result<CidGeneric<S>, MultihasherError> {
         if self.multihash_size > S {
-            error!(
-                "Multihash<{}> can not hold multihash of size {}",
+            debug!(
+                "beetswap error: Multihash<{}> can not hold multihash of size {}",
                 S, self.multihash_size
             );
             return Err(MultihasherError::InvalidMultihashSize);

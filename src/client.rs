@@ -20,7 +20,7 @@ use libp2p_swarm::{
     ConnectionHandlerEvent, ConnectionId, NotifyHandler, StreamProtocol, SubstreamProtocol, ToSwarm,
 };
 use smallvec::SmallVec;
-use tracing::warn;
+use tracing::debug;
 
 use crate::incoming_stream::ClientMessage;
 use crate::message::Codec;
@@ -570,7 +570,7 @@ impl<const S: usize> ClientConnectionHandler<S> {
     }
 
     fn close_sink_on_error(&mut self, location: &str) {
-        warn!("sink operation failed, closing: {location}");
+        debug!("beetswap error: sink operation failed, closing: {location}");
         self.sink_state = SinkState::None;
     }
 
