@@ -87,7 +87,7 @@ impl<const S: usize> futures_core::stream::Stream for IncomingStream<S> {
             let msg = match self.stream.poll_next_unpin(cx) {
                 Poll::Ready(Some(Ok(msg))) => msg,
                 Poll::Ready(Some(Err(e))) => {
-                    debug!("beetswap error: Message decoding failed: {e}");
+                    debug!("Message decoding failed: {e}");
                     return Poll::Ready(None);
                 }
                 Poll::Ready(None) => return Poll::Ready(None),
@@ -116,10 +116,7 @@ async fn process_message<const S: usize>(
         let cid = match CidGeneric::try_from(&block_presence.cid[..]) {
             Ok(cid) => cid,
             Err(e) => {
-                debug!(
-                    "beetswap error: Invalid CID bytes: {}: {:?}",
-                    e, block_presence.cid
-                );
+                debug!("Invalid CID bytes: {}: {:?}", e, block_presence.cid);
                 return None;
             }
         };
@@ -133,10 +130,7 @@ async fn process_message<const S: usize>(
 
     for payload in msg.payload {
         let Some(cid_prefix) = CidPrefix::from_bytes(&payload.prefix) else {
-            debug!(
-                "beeswap error: block.prefix not decodable: {:?}",
-                payload.prefix
-            );
+            debug!("block.prefix not decodable: {:?}", payload.prefix);
             return None;
         };
 
@@ -144,18 +138,18 @@ async fn process_message<const S: usize>(
             Ok(cid) => cid,
             Err(MultihasherError::UnknownMultihashCode) => {
                 debug!(
-                    "beetswap error: Multihasher non-fatal error: Unknown multihash code: {}",
+                    "Multihasher non-fatal error: Unknown multihash code: {}",
                     cid_prefix.multihash_code()
                 );
                 continue;
             }
             Err(MultihasherError::Custom(e)) => {
-                debug!("beetswap error: Multihasher non-fatal error: {e}");
+                debug!("Multihasher non-fatal error: {e}");
                 continue;
             }
             // Any other error is fatal and we need to close the stream.
             Err(e) => {
-                debug!("beetswap error: Multihasher fatal error: {e}");
+                debug!("Multihasher fatal error: {e}");
                 return None;
             }
         };

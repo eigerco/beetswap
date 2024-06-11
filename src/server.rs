@@ -271,7 +271,7 @@ where
                     self.outgoing_queue.push_back((cid, data));
                 }
                 Err(e) => {
-                    debug!("beetswap error: Fetching {cid} from blockstore failed: {e}");
+                    debug!("Fetching {cid} from blockstore failed: {e}");
                 }
             }
         }
@@ -393,7 +393,7 @@ impl<const S: usize> ServerConnectionHandler<S> {
     }
 
     fn close_sink_on_error(&mut self, location: &str) {
-        debug!("beetswap error: sink operation failed, closing: {location}");
+        debug!("sink operation failed, closing: {location}");
         self.sink = SinkState::None;
     }
 

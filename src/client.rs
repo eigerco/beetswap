@@ -570,7 +570,7 @@ impl<const S: usize> ClientConnectionHandler<S> {
     }
 
     fn close_sink_on_error(&mut self, location: &str) {
-        debug!("beetswap error: sink operation failed, closing: {location}");
+        debug!("sink operation failed, closing: {location}");
         self.sink_state = SinkState::None;
     }
 

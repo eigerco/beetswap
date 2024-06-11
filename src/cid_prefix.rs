@@ -90,7 +90,7 @@ impl CidPrefix {
     ) -> Result<CidGeneric<S>, MultihasherError> {
         if self.multihash_size > S {
             debug!(
-                "beetswap error: Multihash<{}> can not hold multihash of size {}",
+                "Multihash<{}> can not hold multihash of size {}",
                 S, self.multihash_size
             );
             return Err(MultihasherError::InvalidMultihashSize);
