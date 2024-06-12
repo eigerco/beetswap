@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/eigerco/beetswap/compare/v0.1.0...v0.1.1) - 2024-06-12
+
+### Added
+- Change all error/warn logs to debug ([#47](https://github.com/eigerco/beetswap/pull/47))
+
+### Fixed
+- Upgrade time crate to fix rust-lang/rust[#125319](https://github.com/eigerco/beetswap/pull/125319) ([#48](https://github.com/eigerco/beetswap/pull/48))
+- *(doc)* rename doc_cfg guard to docsrs, rust-lang/cargo[#13875](https://github.com/eigerco/beetswap/pull/13875) ([#45](https://github.com/eigerco/beetswap/pull/45))
+
 ## [0.1.0](https://github.com/eigerco/beetswap/releases/tag/v0.1.0) - 2024-04-15
 
 ### Added
