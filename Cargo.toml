@@ -40,6 +40,10 @@ tracing = "0.1"
 unsigned-varint = "0.8"
 void = "1"
 
+# `time` is a dependency of a dependency but we need to specify it
+# for fixing rust-lang/rust#125319.
+time = { version = "0.3.36", default-features = false }
+
 [dev-dependencies]
 anyhow = "1.0"
 clap = { version = "4.4", features = ["derive"] }
