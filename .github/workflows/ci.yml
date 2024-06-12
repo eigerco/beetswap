@@ -102,7 +102,7 @@ jobs:
     - name: Install cargo-udeps
       uses: taiki-e/cache-cargo-install-action@v1
       with:
-        tool: cargo-udeps@0.1.45
+        tool: cargo-udeps@0.1.48
 
     - name: Check for unused dependencies
       run: cargo +nightly udeps --all-targets
