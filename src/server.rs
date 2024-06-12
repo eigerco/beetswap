@@ -16,7 +16,7 @@ use libp2p_swarm::{
     ConnectionHandlerEvent, NotifyHandler, StreamProtocol, SubstreamProtocol, ToSwarm,
 };
 use smallvec::SmallVec;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 use crate::incoming_stream::ServerMessage;
 use crate::message::Codec;
@@ -271,7 +271,7 @@ where
                     self.outgoing_queue.push_back((cid, data));
                 }
                 Err(e) => {
-                    warn!("Fetching {cid} from blockstore failed: {e}");
+                    debug!("Fetching {cid} from blockstore failed: {e}");
                 }
             }
         }
@@ -393,7 +393,7 @@ impl<const S: usize> ServerConnectionHandler<S> {
     }
 
     fn close_sink_on_error(&mut self, location: &str) {
-        warn!("sink operation failed, closing: {location}");
+        debug!("sink operation failed, closing: {location}");
         self.sink = SinkState::None;
     }
 
