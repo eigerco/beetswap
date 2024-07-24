@@ -98,12 +98,12 @@ where
     B: Blockstore + 'static,
 {
     /// Creates a new [`Behaviour`] with the default configuration.
-    pub fn new(blockstore: B) -> Behaviour<MAX_MULTIHASH_SIZE, B> {
+    pub fn new(blockstore: Arc<B>) -> Behaviour<MAX_MULTIHASH_SIZE, B> {
         BehaviourBuilder::new(blockstore).build()
     }
 
     /// Creates a new [`BehaviourBuilder`].
-    pub fn builder(blockstore: B) -> BehaviourBuilder<MAX_MULTIHASH_SIZE, B> {
+    pub fn builder(blockstore: Arc<B>) -> BehaviourBuilder<MAX_MULTIHASH_SIZE, B> {
         BehaviourBuilder::new(blockstore)
     }
 

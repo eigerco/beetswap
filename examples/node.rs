@@ -22,6 +22,7 @@
 //! cargo run --example=node  -- -l 9898 bafkreiczsrdrvoybcevpzqmblh3my5fu6ui3tgag3jm3hsxvvhaxhswpyu
 //! ```
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -71,12 +72,12 @@ async fn main() -> Result<()> {
 
     let _guard = init_tracing();
 
-    let store = InMemoryBlockstore::new();
+    let blockstore = Arc::new(InMemoryBlockstore::new());
     for preload_string in args.preload_blockstore_string {
         let block = StringBlock(preload_string);
         let cid = block.cid()?;
         info!("inserted {cid} with content '{}'", block.0);
-        store.put_keyed(&cid, block.data()).await?;
+        blockstore.put_keyed(&cid, block.data()).await?;
     }
 
     let mut swarm = SwarmBuilder::with_new_identity()
@@ -91,7 +92,7 @@ async fn main() -> Result<()> {
                 "/ipfs/id/1.0.0".to_string(),
                 key.public(),
             )),
-            bitswap: beetswap::Behaviour::new(store),
+            bitswap: beetswap::Behaviour::new(blockstore),
         })?
         .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
         .build();

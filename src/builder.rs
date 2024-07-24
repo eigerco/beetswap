@@ -13,9 +13,10 @@ use crate::{Behaviour, Error, Result};
 /// # Example
 ///
 /// ```rust,no_run
+/// # use std::sync::Arc;
 /// # use blockstore::InMemoryBlockstore;
 /// # fn new() -> beetswap::Behaviour<64, InMemoryBlockstore<64>> {
-/// beetswap::Behaviour::builder(InMemoryBlockstore::new())
+/// beetswap::Behaviour::builder(Arc::new(InMemoryBlockstore::new()))
 ///     .build()
 /// # }
 pub struct BehaviourBuilder<const S: usize, B>
@@ -23,7 +24,7 @@ where
     B: Blockstore + 'static,
 {
     protocol_prefix: Option<String>,
-    blockstore: B,
+    blockstore: Arc<B>,
     client: ClientConfig,
     multihasher: MultihasherTable<S>,
 }
@@ -33,7 +34,7 @@ where
     B: Blockstore + 'static,
 {
     /// Creates a new builder for [`Behaviour`].
-    pub(crate) fn new(blockstore: B) -> Self {
+    pub(crate) fn new(blockstore: Arc<B>) -> Self {
         BehaviourBuilder {
             protocol_prefix: None,
             blockstore,
@@ -55,10 +56,11 @@ where
     /// # Example
     ///
     /// ```rust
+    /// # use std::sync::Arc;
     /// # use blockstore::InMemoryBlockstore;
     /// # fn new() -> beetswap::Result<beetswap::Behaviour<64, InMemoryBlockstore<64>>> {
     /// #   Ok(
-    /// beetswap::Behaviour::builder(InMemoryBlockstore::new())
+    /// beetswap::Behaviour::builder(Arc::new(InMemoryBlockstore::new()))
     ///     .protocol_prefix("/celestia/celestia")?
     ///     .build()
     /// #   )
@@ -78,9 +80,10 @@ where
     /// # Example
     ///
     /// ```rust
+    /// # use std::sync::Arc;
     /// # use blockstore::InMemoryBlockstore;
     /// # fn new() -> beetswap::Behaviour<64, InMemoryBlockstore<64>> {
-    /// beetswap::Behaviour::builder(InMemoryBlockstore::new())
+    /// beetswap::Behaviour::builder(Arc::new(InMemoryBlockstore::new()))
     ///     .client_set_send_dont_have(false)
     ///     .build()
     /// # }
@@ -111,7 +114,7 @@ where
 
     /// Build a [`Behaviour`].
     pub fn build(self) -> Behaviour<S, B> {
-        let blockstore = Arc::new(self.blockstore);
+        let blockstore = self.blockstore;
         let multihasher = Arc::new(self.multihasher);
         let protocol_prefix = self.protocol_prefix.as_deref();
 
@@ -133,7 +136,8 @@ mod tests {
     #[test]
     fn invalid_protocol_prefix() {
         assert!(matches!(
-            BehaviourBuilder::<64, _>::new(InMemoryBlockstore::<64>::new()).protocol_prefix("foo"),
+            BehaviourBuilder::<64, _>::new(Arc::new(InMemoryBlockstore::<64>::new()))
+                .protocol_prefix("foo"),
             Err(Error::InvalidProtocolPrefix(_))
         ));
     }
