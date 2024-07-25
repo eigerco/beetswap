@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::sync::Arc;
 
 use beetswap::{Error, Event, QueryId};
 use blockstore::InMemoryBlockstore;
@@ -139,7 +140,7 @@ impl TestBitswapWorker {
 }
 
 pub async fn spawn_node(store: Option<InMemoryBlockstore<CID_SIZE>>) -> TestBitswapNode {
-    let store = store.unwrap_or_default();
+    let blockstore = Arc::new(store.unwrap_or_default());
 
     let mut swarm = SwarmBuilder::with_new_identity()
         .with_tokio()
@@ -149,7 +150,7 @@ pub async fn spawn_node(store: Option<InMemoryBlockstore<CID_SIZE>>) -> TestBits
             libp2p_yamux::Config::default,
         )
         .unwrap()
-        .with_behaviour(|_key| beetswap::Behaviour::<CID_SIZE, _>::new(store))
+        .with_behaviour(|_key| beetswap::Behaviour::<CID_SIZE, _>::new(blockstore))
         .unwrap()
         .build();
 
