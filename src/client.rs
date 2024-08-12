@@ -13,7 +13,6 @@ use futures_timer::Delay;
 use futures_util::future::{AbortHandle, Abortable, FutureExt};
 use futures_util::sink::SinkExt;
 use futures_util::stream::{FuturesUnordered, StreamExt};
-use instant::Instant;
 use libp2p_core::upgrade::ReadyUpgrade;
 use libp2p_identity::PeerId;
 use libp2p_swarm::{
@@ -21,6 +20,7 @@ use libp2p_swarm::{
 };
 use smallvec::SmallVec;
 use tracing::debug;
+use web_time::Instant;
 
 use crate::incoming_stream::ClientMessage;
 use crate::message::Codec;
