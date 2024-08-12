@@ -29,9 +29,9 @@ futures-core = "0.3"
 futures-timer = "3"
 futures-util = "0.3"
 instant = "0.1.12"
-libp2p-core = "0.42"
-libp2p-identity = "0.2"
-libp2p-swarm = "0.45"
+libp2p-core = "0.42.0"
+libp2p-identity = "0.2.9"
+libp2p-swarm = "0.45.1"
 multihash-codetable = "0.1"
 quick-protobuf = "0.8"
 smallvec = "1"
@@ -48,7 +48,7 @@ time = { version = "0.3.36", default-features = false }
 anyhow = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 hex = "0.4"
-libp2p = { version = "0.54", features = [
+libp2p = { version = "0.54.0", features = [
   "tokio",
   "tcp",
   "identify",
