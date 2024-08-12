@@ -29,9 +29,9 @@ futures-core = "0.3"
 futures-timer = "3"
 futures-util = "0.3"
 instant = "0.1.12"
-libp2p-core = "0.41"
-libp2p-identity = "0.2"
-libp2p-swarm = "0.44"
+libp2p-core = "0.42.0"
+libp2p-identity = "0.2.9"
+libp2p-swarm = "0.45.1"
 multihash-codetable = "0.1"
 quick-protobuf = "0.8"
 smallvec = "1"
@@ -48,11 +48,16 @@ time = { version = "0.3.36", default-features = false }
 anyhow = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 hex = "0.4"
-libp2p = { version = "0.53", features = ["tokio", "tcp", "identify", "macros"] }
-libp2p-noise = "0.44"
-libp2p-stream = "0.1.0-alpha"
-libp2p-swarm-test = "0.3.0"
-libp2p-yamux = "0.45"
+libp2p = { version = "0.54.0", features = [
+  "tokio",
+  "tcp",
+  "identify",
+  "macros",
+  "noise",
+  "yamux",
+] }
+libp2p-stream = "0.2.0-alpha"
+libp2p-swarm-test = "0.4.0"
 multihash = "0.19"
 multihash-codetable = { version = "0.1", features = ["digest", "sha2"] }
 tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
