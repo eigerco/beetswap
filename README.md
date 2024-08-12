@@ -3,13 +3,13 @@
 **Beetswap** is a Rust-based implementation of the [`Bitswap`] protocol for the [`libp2p`] networking stack.
 Bitswap is a protocol developed for the exchange of blocks between peers. It plays a critical role in data distribution, ensuring that peers can request and receive the blocks they need from other peers in the network. 
 
+Check out the [examples](examples).
+
 ## Key Features
 
 - **Efficient Block Exchange**: Implements the Bitswap protocol to ensure efficient transfer of blocks between peers.
 - **Libp2p Integration**: Designed to integrate smoothly with libp2p, allowing it to be used in a wide range of decentralized applications.
 - **Rust Safety and Performance**: Takes advantage of Rust's memory safety guarantees and performance optimizations, making it a robust choice for networked applications.
-
-Check out the [examples](examples).
 
 ## Contributing
 
