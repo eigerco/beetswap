@@ -9,7 +9,10 @@ use cid::CidGeneric;
 use client::SendingState;
 use futures_util::stream::{SelectAll, StreamExt};
 use incoming_stream::IncomingMessage;
-use libp2p_core::{multiaddr::Multiaddr, upgrade::ReadyUpgrade, Endpoint};
+use libp2p_core::multiaddr::Multiaddr;
+use libp2p_core::transport::PortUse;
+use libp2p_core::upgrade::ReadyUpgrade;
+use libp2p_core::Endpoint;
 use libp2p_identity::PeerId;
 use libp2p_swarm::{
     handler::ConnectionEvent, ConnectionClosed, ConnectionDenied, ConnectionHandler,
@@ -150,6 +153,7 @@ where
         peer: PeerId,
         _addr: &Multiaddr,
         _role_override: Endpoint,
+        _port_use: PortUse,
     ) -> Result<Self::ConnectionHandler, ConnectionDenied> {
         Ok(ConnHandler {
             peer,

@@ -8,7 +8,7 @@ use fnv::FnvHashMap;
 use futures_util::future::FutureExt;
 use futures_util::stream::StreamExt;
 use libp2p::swarm::{DialError, SwarmEvent};
-use libp2p::{tcp, Multiaddr, PeerId, Swarm, SwarmBuilder};
+use libp2p::{noise, tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder};
 use multihash_codetable::{Code, MultihashDigest};
 use tokio::select;
 use tokio::sync::{mpsc, oneshot};
@@ -146,8 +146,8 @@ pub async fn spawn_node(store: Option<InMemoryBlockstore<CID_SIZE>>) -> TestBits
         .with_tokio()
         .with_tcp(
             tcp::Config::default(),
-            libp2p_noise::Config::new,
-            libp2p_yamux::Config::default,
+            noise::Config::new,
+            yamux::Config::default,
         )
         .unwrap()
         .with_behaviour(|_key| beetswap::Behaviour::<CID_SIZE, _>::new(blockstore))

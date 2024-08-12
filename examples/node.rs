@@ -33,8 +33,8 @@ use blockstore::{
 use cid::Cid;
 use clap::Parser;
 use libp2p::{
-    futures::StreamExt, identify, swarm::NetworkBehaviour, swarm::SwarmEvent, tcp, Multiaddr,
-    SwarmBuilder,
+    futures::StreamExt, identify, noise, swarm::NetworkBehaviour, swarm::SwarmEvent, tcp, yamux,
+    Multiaddr, SwarmBuilder,
 };
 use multihash_codetable::{Code, MultihashDigest};
 use tracing::{debug, info};
@@ -84,8 +84,8 @@ async fn main() -> Result<()> {
         .with_tokio()
         .with_tcp(
             tcp::Config::default(),
-            libp2p_noise::Config::new,
-            libp2p_yamux::Config::default,
+            noise::Config::new,
+            yamux::Config::default,
         )?
         .with_behaviour(|key| Behaviour {
             identify: identify::Behaviour::new(identify::Config::new(
