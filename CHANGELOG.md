@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/eigerco/beetswap/compare/v0.2.0...v0.3.0) - 2024-08-12
+
+### Other
+- Replace `instant` with `web-time` crate ([#52](https://github.com/eigerco/beetswap/pull/52))
+- [**breaking**] Upgrade to libp2p 0.54 ([#51](https://github.com/eigerco/beetswap/pull/51))
+- Make readme presentable ([#53](https://github.com/eigerco/beetswap/pull/53))
+- Fix doc-lazy-continuations clippy CI ([#54](https://github.com/eigerco/beetswap/pull/54))
+
 ## [0.2.0](https://github.com/eigerco/beetswap/compare/v0.1.1...v0.2.0) - 2024-07-25
 
 ### Added
