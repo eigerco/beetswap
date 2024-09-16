@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/eigerco/beetswap/compare/v0.3.1...v0.4.0) - 2024-09-16
+
+### Other
+
+- [**breaking**] Upgrade blockstore ([#58](https://github.com/eigerco/beetswap/pull/58))
+
 ## [0.3.1](https://github.com/eigerco/beetswap/compare/v0.3.0...v0.3.1) - 2024-08-13
 
 ### Other
