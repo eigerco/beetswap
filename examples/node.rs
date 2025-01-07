@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 //! Example bitswap node implementation allowing with basic interaction over cli
 //!
 //! It shows off example way to setup beetswap behaviour with a libp2p swarm and then either
