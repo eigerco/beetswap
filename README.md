@@ -11,6 +11,18 @@ Check out the [examples](./examples).
 - **Libp2p Integration**: Designed to integrate smoothly with libp2p, allowing it to be used in a wide range of decentralized applications.
 - **Rust Safety and Performance**: Takes advantage of Rust's memory safety guarantees and performance optimizations, making it a robust choice for networked applications.
 
+### Hasher Choices
+
+Beetswap uses [multihash-codetable](https://docs.rs/crate/multihash-codetable/latest/features), so hashers can be enabled with the corresponding feature:
+
+```toml
+# your crate's Cargo.toml
+# Say we want CIDs that used blake3 or sha2 or sha3
+multihash-codetable = { version = "0.1", features = ["blake3", "sha2", "sha3"] }
+```
+
+Beyond the multihash codetable hashers, other custom hashers can be added, see [multihasher](./src/multihasher.rs) for further details.
+
 ## Contributing
 
 We welcome contributions! Please fork the repository and submit a pull request.
