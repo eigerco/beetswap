@@ -12,12 +12,14 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - name: Run clippy
-      run: cargo clippy --all --all-targets -- -D warnings -D missing-docs
+      run: cargo clippy --all --all-targets -- -D warnings
 
   docs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v1
+    - name: Check missing docs
+      run: cargo clippy --all -- -D missing-docs
     - name: Run rustdoc check
       env:
         RUSTDOCFLAGS: -D warnings
