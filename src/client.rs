@@ -33,7 +33,7 @@ use crate::{Error, Event, Result, ToBehaviourEvent, ToHandlerEvent};
 
 const SEND_FULL_INTERVAL: Duration = Duration::from_secs(30);
 const RECEIVE_REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
-const START_SENDING_TIMEOUT: Duration = Duration::from_secs(5);
+const START_SENDING_TIMEOUT: Duration = Duration::from_secs(12);
 
 /// ID of an ongoing query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
