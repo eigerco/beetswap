@@ -56,7 +56,6 @@ where
 }
 
 /// Event produced by [`Behaviour`].
-#[derive(Debug)]
 pub enum Event {
     /// Requested block has been successfuly retrieved
     GetQueryResponse {
@@ -72,6 +71,29 @@ pub enum Event {
         /// Error that occurred when getting the data
         error: Error,
     },
+}
+
+impl core::fmt::Debug for Event {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::GetQueryResponse { query_id, data } => {
+                let data_str = if data.len() > 32 {
+                    format!("{:?}", data[..32].as_ref())
+                } else {
+                    format!("{:?}", data)
+                };
+                f.debug_struct("GetQueryResponse")
+                    .field("query_id", query_id)
+                    .field("data", &data_str)
+                    .finish()
+            }
+            Self::GetQueryError { query_id, error } => f
+                .debug_struct("GetQueryError")
+                .field("query_id", query_id)
+                .field("error", error)
+                .finish(),
+        }
+    }
 }
 
 /// Representation of all the errors that can occur when interacting with this crate.
