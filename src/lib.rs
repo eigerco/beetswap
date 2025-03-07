@@ -1,6 +1,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 
+use core::fmt;
 use std::sync::Arc;
 use std::task::{ready, Context, Poll};
 
@@ -73,20 +74,22 @@ pub enum Event {
     },
 }
 
-impl core::fmt::Debug for Event {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
+struct DataFmt<'a>(&'a [u8]);
+
+impl<'a> fmt::Debug for DataFmt<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("[... {} bytes]", self.0.len()))
+    }
+}
+
+impl fmt::Debug for Event {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::GetQueryResponse { query_id, data } => {
-                let data_str = if data.len() > 32 {
-                    format!("{:?}", data[..32].as_ref())
-                } else {
-                    format!("{:?}", data)
-                };
-                f.debug_struct("GetQueryResponse")
-                    .field("query_id", query_id)
-                    .field("data", &data_str)
-                    .finish()
-            }
+            Self::GetQueryResponse { query_id, data } => f
+                .debug_struct("GetQueryResponse")
+                .field("query_id", query_id)
+                .field("data", &DataFmt(&data))
+                .finish(),
             Self::GetQueryError { query_id, error } => f
                 .debug_struct("GetQueryError")
                 .field("query_id", query_id)
