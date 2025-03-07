@@ -76,7 +76,7 @@ pub enum Event {
 
 struct DataFmt<'a>(&'a [u8]);
 
-impl<'a> fmt::Debug for DataFmt<'a> {
+impl fmt::Debug for DataFmt<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!("[... {} bytes]", self.0.len()))
     }
@@ -88,7 +88,7 @@ impl fmt::Debug for Event {
             Self::GetQueryResponse { query_id, data } => f
                 .debug_struct("GetQueryResponse")
                 .field("query_id", query_id)
-                .field("data", &DataFmt(&data))
+                .field("data", &DataFmt(data))
                 .finish(),
             Self::GetQueryError { query_id, error } => f
                 .debug_struct("GetQueryError")
