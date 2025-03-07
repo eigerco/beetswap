@@ -77,13 +77,13 @@ pub enum Event {
 struct DataFmt<'a>(&'a [u8]);
 
 impl<'a> fmt::Debug for DataFmt<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!("[... {} bytes]", self.0.len()))
     }
 }
 
 impl fmt::Debug for Event {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::GetQueryResponse { query_id, data } => f
                 .debug_struct("GetQueryResponse")
