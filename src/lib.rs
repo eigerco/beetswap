@@ -1,7 +1,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 
-use core::fmt;
+use std::fmt;
 use std::sync::Arc;
 use std::task::{ready, Context, Poll};
 
