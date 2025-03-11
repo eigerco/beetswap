@@ -1,6 +1,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 
+use std::fmt;
 use std::sync::Arc;
 use std::task::{ready, Context, Poll};
 
@@ -56,7 +57,6 @@ where
 }
 
 /// Event produced by [`Behaviour`].
-#[derive(Debug)]
 pub enum Event {
     /// Requested block has been successfuly retrieved
     GetQueryResponse {
@@ -72,6 +72,31 @@ pub enum Event {
         /// Error that occurred when getting the data
         error: Error,
     },
+}
+
+struct DataFmt<'a>(&'a [u8]);
+
+impl fmt::Debug for DataFmt<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_fmt(format_args!("[... {} bytes]", self.0.len()))
+    }
+}
+
+impl fmt::Debug for Event {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::GetQueryResponse { query_id, data } => f
+                .debug_struct("GetQueryResponse")
+                .field("query_id", query_id)
+                .field("data", &DataFmt(data))
+                .finish(),
+            Self::GetQueryError { query_id, error } => f
+                .debug_struct("GetQueryError")
+                .field("query_id", query_id)
+                .field("error", error)
+                .finish(),
+        }
+    }
 }
 
 /// Representation of all the errors that can occur when interacting with this crate.
