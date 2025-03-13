@@ -500,7 +500,6 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "unsigned-varint 0.8.0",
- "void",
  "web-time",
 ]
 
