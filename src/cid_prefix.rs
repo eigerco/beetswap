@@ -16,7 +16,6 @@ pub(crate) struct CidPrefix {
 }
 
 impl CidPrefix {
-    #[allow(dead_code)]
     pub(crate) fn from_cid<const S: usize>(cid: &CidGeneric<S>) -> CidPrefix {
         CidPrefix {
             version: cid.version(),
@@ -52,7 +51,6 @@ impl CidPrefix {
         })
     }
 
-    #[allow(dead_code)]
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
         match self.version {
             // CIDv0 is a naked multihash that with fixed code and size
