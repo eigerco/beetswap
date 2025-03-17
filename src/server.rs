@@ -18,6 +18,7 @@ use libp2p_swarm::{
 use smallvec::SmallVec;
 use tracing::{debug, trace};
 
+use crate::cid_prefix::CidPrefix;
 use crate::incoming_stream::ServerMessage;
 use crate::message::Codec;
 use crate::proto::message::{
@@ -234,7 +235,7 @@ where
                 blocks_ready_for_peer
                     .entry(peer)
                     .or_default()
-                    .push((cid.to_bytes(), data.clone()))
+                    .push((CidPrefix::from_cid(&cid).to_bytes(), data.clone()))
             }
         }
 
@@ -516,7 +517,13 @@ mod tests {
         let ToHandlerEvent::QueueOutgoingMessages(msgs) = event else {
             panic!("Invalid handler message type ");
         };
-        assert_eq!(msgs, vec![(cid.into(), data.as_bytes().to_vec())]);
+        assert_eq!(
+            msgs,
+            vec![(
+                CidPrefix::from_cid(&cid).to_bytes(),
+                data.as_bytes().to_vec()
+            )]
+        );
     }
 
     #[tokio::test]
@@ -555,7 +562,13 @@ mod tests {
         let ToHandlerEvent::QueueOutgoingMessages(msgs) = event else {
             panic!("Invalid handler message type ");
         };
-        assert_eq!(msgs, vec![(cid.into(), data.as_bytes().to_vec())]);
+        assert_eq!(
+            msgs,
+            vec![(
+                CidPrefix::from_cid(&cid).to_bytes(),
+                data.as_bytes().to_vec()
+            )]
+        );
     }
 
     async fn new_server() -> ServerBehaviour<64, InMemoryBlockstore<64>> {
