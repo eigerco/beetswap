@@ -38,7 +38,6 @@ smallvec = "1"
 thiserror = "1"
 tracing = "0.1"
 unsigned-varint = "0.8"
-void = "1"
 
 # `time` is a dependency of a dependency but we need to specify it
 # for fixing rust-lang/rust#125319.
