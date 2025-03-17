@@ -6,6 +6,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/eigerco/beetswap/compare/v0.4.0...v0.4.1) - 2025-03-17
+
+### Fixed
+
+- remove unused void crate ([#66](https://github.com/eigerco/beetswap/pull/66))
+- remove multihash digest from the prefix ([#68](https://github.com/eigerco/beetswap/pull/68))
+- remove unnecessary lifetimes
+- unify `fmt`
+- rework format string
+- cut data Debug length to 32
+
+### Other
+
+- Update src/lib.rs
+- Add note about hashers in readme ([#60](https://github.com/eigerco/beetswap/pull/60))
+
 ## [0.4.0](https://github.com/eigerco/beetswap/compare/v0.3.1...v0.4.0) - 2024-09-16
 
 ### Other
