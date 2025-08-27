@@ -707,8 +707,8 @@ mod tests {
 
     #[tokio::test]
     async fn get_unknown_cid_responds_with_have() {
-        let server = Swarm::new_ephemeral(|_| libp2p_stream::Behaviour::new());
-        let mut client = Swarm::new_ephemeral(|_| {
+        let server = Swarm::new_ephemeral_tokio(|_| libp2p_stream::Behaviour::new());
+        let mut client = Swarm::new_ephemeral_tokio(|_| {
             Behaviour::<64, _>::new(Arc::new(InMemoryBlockstore::<64>::new()))
         });
 
@@ -787,9 +787,9 @@ mod tests {
 
     #[tokio::test]
     async fn get_unknown_cid_responds_with_dont_have() {
-        let server1 = Swarm::new_ephemeral(|_| libp2p_stream::Behaviour::new());
-        let server2 = Swarm::new_ephemeral(|_| libp2p_stream::Behaviour::new());
-        let mut client = Swarm::new_ephemeral(|_| {
+        let server1 = Swarm::new_ephemeral_tokio(|_| libp2p_stream::Behaviour::new());
+        let server2 = Swarm::new_ephemeral_tokio(|_| libp2p_stream::Behaviour::new());
+        let mut client = Swarm::new_ephemeral_tokio(|_| {
             Behaviour::<64, _>::new(Arc::new(InMemoryBlockstore::<64>::new()))
         });
 
@@ -904,8 +904,8 @@ mod tests {
 
     #[tokio::test]
     async fn get_unknown_cid_responds_with_block() {
-        let server = Swarm::new_ephemeral(|_| libp2p_stream::Behaviour::new());
-        let mut client = Swarm::new_ephemeral(|_| {
+        let server = Swarm::new_ephemeral_tokio(|_| libp2p_stream::Behaviour::new());
+        let mut client = Swarm::new_ephemeral_tokio(|_| {
             Behaviour::<64, _>::new(Arc::new(InMemoryBlockstore::<64>::new()))
         });
 
@@ -985,8 +985,8 @@ mod tests {
 
     #[tokio::test]
     async fn update_wantlist() {
-        let server = Swarm::new_ephemeral(|_| libp2p_stream::Behaviour::new());
-        let mut client = Swarm::new_ephemeral(|_| {
+        let server = Swarm::new_ephemeral_tokio(|_| libp2p_stream::Behaviour::new());
+        let mut client = Swarm::new_ephemeral_tokio(|_| {
             Behaviour::<64, _>::new(Arc::new(InMemoryBlockstore::<64>::new()))
         });
 
@@ -1063,8 +1063,8 @@ mod tests {
 
     #[tokio::test]
     async fn request_then_cancel() {
-        let server = Swarm::new_ephemeral(|_| libp2p_stream::Behaviour::new());
-        let mut client = Swarm::new_ephemeral(|_| {
+        let server = Swarm::new_ephemeral_tokio(|_| libp2p_stream::Behaviour::new());
+        let mut client = Swarm::new_ephemeral_tokio(|_| {
             Behaviour::<64, _>::new(Arc::new(InMemoryBlockstore::<64>::new()))
         });
 
@@ -1133,8 +1133,8 @@ mod tests {
 
     #[tokio::test]
     async fn request_before_connect() {
-        let server = Swarm::new_ephemeral(|_| libp2p_stream::Behaviour::new());
-        let mut client = Swarm::new_ephemeral(|_| {
+        let server = Swarm::new_ephemeral_tokio(|_| libp2p_stream::Behaviour::new());
+        let mut client = Swarm::new_ephemeral_tokio(|_| {
             Behaviour::<64, _>::new(Arc::new(InMemoryBlockstore::<64>::new()))
         });
 
@@ -1190,8 +1190,8 @@ mod tests {
         let blockstore = Arc::new(InMemoryBlockstore::<64>::new());
         blockstore.put_keyed(&cid1, data1).await.unwrap();
 
-        let server = Swarm::new_ephemeral(|_| libp2p_stream::Behaviour::new());
-        let mut client = Swarm::new_ephemeral(move |_| Behaviour::<64, _>::new(blockstore));
+        let server = Swarm::new_ephemeral_tokio(|_| libp2p_stream::Behaviour::new());
+        let mut client = Swarm::new_ephemeral_tokio(move |_| Behaviour::<64, _>::new(blockstore));
 
         let (_server_control, mut server_incoming_streams) =
             connect_to_server(&mut client, server).await;
