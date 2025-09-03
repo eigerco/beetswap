@@ -10,16 +10,31 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v4
+
+    - name: Setup toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        components: clippy
+        rustflags: -D warnings
+
     - name: Run clippy
-      run: cargo clippy --all --all-targets -- -D warnings
+      run: cargo clippy --all --all-targets
 
   docs:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v4
+
+    - name: Setup toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        components: clippy
+        rustflags: -D missing-docs
+
     - name: Check missing docs
-      run: cargo clippy --all -- -D missing-docs
+      run: cargo clippy --all
+
     - name: Run rustdoc check
       env:
         RUSTDOCFLAGS: -D warnings
@@ -28,7 +43,13 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v4
+
+    - name: Setup toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        components: rustfmt
+
     - name: Run fmt
       run: cargo fmt -- --check
 
@@ -36,21 +57,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v4
 
-    - name: Set up cargo cache
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys:
-          cargo-${{ hashFiles('**/Cargo.lock') }}
-          cargo-
+    - name: Setup toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
 
     - name: Run tests
       run: cargo test --locked
@@ -60,51 +70,38 @@ jobs:
     runs-on: ubuntu-latest
     name: test (minimal versions)
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v4
 
-    - name: Install nightly toolchain
-      uses: dtolnay/rust-toolchain@nightly
-
-    - name: Generate Cargo.lock with minimal versions
-      run: |
-        rm Cargo.lock
-        cargo +nightly update -Zminimal-versions
-
-    - name: Install stable toolchain
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Set up cargo cache
-      uses: actions/cache@v3
+    - name: Setup toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys:
-          cargo-${{ hashFiles('**/Cargo.lock') }}
-          cargo-
+        components: clippy
+        rustflags: -D missing-docs
 
-    - name: Run tests
-      run: cargo +stable test --locked
+    - name: Install cargo-minimal-versions
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-hack,cargo-minimal-versions
+
+    - name: Check minimal versions
+      run: cargo minimal-versions check --direct
 
 
   unused-deps:
     runs-on: ubuntu-latest
     name: unused dependencies
     steps:
-    - name: Checkout sources
-      uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
-    - name: Install toolchain
-      uses: dtolnay/rust-toolchain@nightly
+    - name: Setup toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: nightly
 
     - name: Install cargo-udeps
-      uses: taiki-e/cache-cargo-install-action@v1
+      uses: taiki-e/install-action@v2
       with:
-        tool: cargo-udeps@0.1.48
+        tool: cargo-udeps
 
     - name: Check for unused dependencies
       run: cargo +nightly udeps --all-targets

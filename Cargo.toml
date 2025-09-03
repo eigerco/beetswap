@@ -22,32 +22,22 @@ categories = [
 [dependencies]
 asynchronous-codec = "0.7"
 blockstore = "0.7"
+bytes = "1"
 cid = "0.11"
-fnv = "1"
-futures-core = "0.3"
-futures-timer = "3"
+fnv = "1.0.5"
+futures-core = "0.3.31"
+futures-timer = "3.0.3"
 futures-util = "0.3"
-web-time = "1"
-libp2p-core = "0.43"
-libp2p-identity = "0.2"
+web-time = "1.1"
+libp2p-core = "0.43.1"
+libp2p-identity = "0.2.12"
 libp2p-swarm = "0.47"
 multihash-codetable = "0.1"
-quick-protobuf = "0.8"
-smallvec = "1"
+quick-protobuf = "0.8.1"
+smallvec = "1.13.2"
 thiserror = "2"
-tracing = "0.1"
+tracing = "0.1.41"
 unsigned-varint = "0.8"
-
-# tweaks needed to allow compliation with -Zminimal-versions
-
-# direct deps
-# libp2p-noise requires the `zeroed` api available since this version
-bytes = "1.2"
-
-# indirect deps
-# older 0.11 releases of netlink-proto pull netlink-packet-core in 0.5
-# which conflicts with 0.7 used everywhere else
-netlink-proto = "0.11.2"
 
 [dev-dependencies]
 anyhow = "1.0"
