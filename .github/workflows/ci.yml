@@ -66,7 +66,7 @@ jobs:
       run: cargo test --locked
 
 
-  test-minimal-versions:
+  minimal-versions:
     runs-on: ubuntu-latest
     name: test (minimal versions)
     steps:
