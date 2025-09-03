@@ -307,7 +307,6 @@ dependencies = [
  "libp2p-swarm-test",
  "multihash",
  "multihash-codetable",
- "netlink-proto",
  "quick-protobuf",
  "smallvec",
  "thiserror 2.0.16",
