@@ -7,7 +7,7 @@ description = "Implementation of bitswap protocol for libp2p"
 authors = ["Eiger <hello@eiger.co>"]
 homepage = "https://www.eiger.co"
 readme = "README.md"
-rust-version = "1.83"
+rust-version = "1.85"
 repository = "https://github.com/eigerco/beetswap"
 # crates.io is limited to 5 keywords and 5 categories
 keywords = ["bitswap", "blockstore", "ipld", "cid"]

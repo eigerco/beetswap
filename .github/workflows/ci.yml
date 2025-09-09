@@ -66,27 +66,6 @@ jobs:
       run: cargo test --locked
 
 
-  minimal-versions:
-    runs-on: ubuntu-latest
-    name: test (minimal versions)
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Setup toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        components: clippy
-        rustflags: -D missing-docs
-
-    - name: Install cargo-minimal-versions
-      uses: taiki-e/install-action@v2
-      with:
-        tool: cargo-hack,cargo-minimal-versions
-
-    - name: Check minimal versions
-      run: cargo minimal-versions check --direct
-
-
   unused-deps:
     runs-on: ubuntu-latest
     name: unused dependencies
@@ -104,6 +83,61 @@ jobs:
         tool: cargo-udeps
 
     - name: Check for unused dependencies
-      run: cargo +nightly udeps --all-targets
+      run: cargo udeps --all-targets
       env:
         RUSTFLAGS: -D warnings
+
+
+  minimal-versions:
+    runs-on: ubuntu-latest
+    name: minimal versions of dependencies
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+
+    - name: Install cargo-minimal-versions
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-hack,cargo-minimal-versions
+
+    - name: Check minimal versions
+      run: cargo minimal-versions check --direct
+
+
+  msrv:
+    runs-on: ubuntu-latest
+    name: minimum supported rust version
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+
+    - name: Install cargo-minimal-versions
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-msrv
+
+    - name: Check MSRV
+      run: cargo msrv verify --all-features
+
+
+  required:
+    runs-on: ubuntu-latest
+    name: Required checks
+    if: ${{ !cancelled() }}
+    needs:
+    - clippy
+    - docs
+    - fmt
+    - test
+    - unused-deps
+    - minimal-versions
+    - msrv
+
+    steps:
+    - name: On failure
+      if: always() && contains(needs.*.result, 'failure')
+      run: exit 1
