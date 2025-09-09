@@ -286,7 +286,7 @@ checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
 
 [[package]]
 name = "beetswap"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "asynchronous-codec",
